@@ -1,0 +1,12 @@
+# Python Backend Dependencies for PLAXIS 3D Spudcan Automation Tool
+
+# For the GUI (based on PRD Recommendation 7.2.1 / 7.2.3)
+PySide6
+
+# For data handling and potential results processing (PRD 7.4.2)
+pandas
+openpyxl
+
+# Add other core dependencies as they are identified, e.g.:
+# numpy (if heavy numerical work is done outside PLAXIS)
+# matplotlib (if generating plots in Python backend/frontend - PRD 7.4.2)
