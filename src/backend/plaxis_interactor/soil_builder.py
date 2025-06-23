@@ -18,106 +18,170 @@ def generate_material_commands(material_model: MaterialProperties) -> List[str]:
         A list of string commands for PLAXIS.
     """
     commands = []
-    mat_name = f"{material_model.model_name or 'DefaultMaterial'}_{material_model.cohesion or 0}_{material_model.friction_angle or 0}"
-    mat_name = "".join(c if c.isalnum() or c in ['_'] else '' for c in mat_name) # Sanitize name
+    # Sanitize material name for PLAXIS: replace spaces, ensure valid characters
+    # Using a simpler sanitized name based on Identification if available, or model_name
+    base_name = getattr(material_model, 'Identification', material_model.model_name or 'DefaultMaterial')
+    sanitized_mat_name = "".join(c if c.isalnum() else '_' for c in base_name)
+    # Ensure it's not empty and doesn't start with a number if that's a PLAXIS rule
+    if not sanitized_mat_name or sanitized_mat_name[0].isdigit():
+        sanitized_mat_name = "Mat_" + sanitized_mat_name
 
-    print(f"STUB: Generating material commands for '{mat_name}' (Model: {material_model.model_name})")
+    print(f"Generating material commands for '{sanitized_mat_name}' (Model: {material_model.model_name})")
 
-    commands.append(f"# --- Material Definition: {mat_name} ---")
-    commands.append(f"echo 'Defining material: {mat_name}'")
+    commands.append(f"# --- Material Definition: {sanitized_mat_name} ---")
+    commands.append(f"echo 'Defining material: {sanitized_mat_name}'")
 
-    # Example: _defMaterial "Sand_MC" "Mohr-Coulomb" MAT_ISOTROPIC ...
-    # Actual command syntax will vary greatly.
-    command_params = [
-        f"material_name='{mat_name}'",
-        f"soil_model='{material_model.model_name or 'MohrCoulomb'}'" # Default if not specified
-    ]
-    if material_model.unit_weight is not None:
-        command_params.append(f"unit_weight={material_model.unit_weight}")
+    # Based on `all.md` (e.g., `soilmat` command):
+    # soilmat "Identification" "Sand" "SoilModel" "Hardening Soil" "gammaUnsat" 17 ...
+    # Or for API: g_i.soilmat(Identification="Sand", SoilModel="Hardening Soil", ...)
+
+    cmd_parts = ["soilmat"] # Using CLI style as a base, easily adaptable to API calls
+    cmd_parts.append(f"\"Identification\" \"{sanitized_mat_name}\"") # Use sanitized name as ID
+
+    if material_model.model_name:
+        cmd_parts.append(f"\"SoilModel\" \"{material_model.model_name}\"")
+    else:
+        cmd_parts.append(f"\"SoilModel\" \"MohrCoulomb\"") # Default if not specified
+
+    # Add common parameters. Parameter names must match PLAXIS internal names.
+    # These are guesses based on common geotechnical software and `all.md` SoilMat properties.
+    param_map = {
+        "unit_weight": "gammaSat", # Assuming gammaSat for general unit weight below WT
+                                   # gammaUnsat might also be needed.
+        "cohesion": "cRef",        # Reference cohesion
+        "friction_angle": "phi",
+        "youngs_modulus": "ERef",  # Reference Young's modulus
+        "poissons_ratio": "nu"
+    }
+    # Need gammaUnsat as well
+    if material_model.unit_weight is not None: # Assuming this is saturated unit weight
+         cmd_parts.append(f"\"{param_map['unit_weight']}\" {material_model.unit_weight}")
+         # Add a placeholder for gammaUnsat, assuming it's slightly less or equal
+         cmd_parts.append(f"\"gammaUnsat\" {material_model.unit_weight - 1 if material_model.unit_weight > 1 else 16.0}") # Educated guess
     if material_model.cohesion is not None:
-        command_params.append(f"cohesion={material_model.cohesion}")
+        cmd_parts.append(f"\"{param_map['cohesion']}\" {material_model.cohesion}")
     if material_model.friction_angle is not None:
-        command_params.append(f"friction_angle={material_model.friction_angle}")
+        cmd_parts.append(f"\"{param_map['friction_angle']}\" {material_model.friction_angle}")
     if material_model.youngs_modulus is not None:
-        command_params.append(f"youngs_modulus={material_model.youngs_modulus}")
+        cmd_parts.append(f"\"{param_map['youngs_modulus']}\" {material_model.youngs_modulus}")
     if material_model.poissons_ratio is not None:
-        command_params.append(f"poissons_ratio={material_model.poissons_ratio}")
+        cmd_parts.append(f"\"{param_map['poissons_ratio']}\" {material_model.poissons_ratio}")
 
-    # Add other parameters based on soil_model type if they were in a dict
-    # if material_model.other_params:
-    #     for key, value in material_model.other_params.items():
-    #         command_params.append(f"{key}={value}")
+    # TODO: Add specific parameters based on material_model.model_name
+    # e.g., for Hardening Soil: E50ref, EoedRef, EURRef, power_m (m), etc.
+    # These would come from material_model.other_params or more specific fields in MaterialProperties
+    # Example for Hardening Soil (parameter names from all.md SoilMat object):
+    # if material_model.model_name == "Hardening Soil":
+    #     if 'E50ref' in material_model.other_params: cmd_parts.append(f"\"E50ref\" {material_model.other_params['E50ref']}")
+    #     ... and so on for other HS parameters ...
 
-    commands.append(f"PLAXIS_API_CALL create_soil_material {' '.join(command_params)}")
-    commands.append(f"echo 'Material {mat_name} definition complete (stub).'")
+    commands.append(" ".join(cmd_parts))
+    commands.append(f"echo 'Material {sanitized_mat_name} definition command generated.'")
+    commands.append(f"# Note: Detailed parameters for specific soil models (e.g., Hardening Soil) need to be added here based on model_name.")
 
-    if not commands:
-        commands.append(f"# STUB: No material commands generated for {mat_name}.")
     return commands
 
 def generate_soil_stratigraphy_commands(
     soil_layers: List[SoilLayer],
-    water_table_depth: Optional[float]
+    water_table_depth: Optional[float],
+    borehole_name: str = "BH1",
+    borehole_coords: tuple = (0,0) # (x,y)
 ) -> List[str]:
     """
-    Generates PLAXIS commands for defining soil stratigraphy (boreholes, soil layers).
-    Placeholder commands.
+    Generates PLAXIS commands for defining soil stratigraphy via a borehole.
+    Commands based on `all.md` (e.g., `borehole`, `soillayer`, `setsoillayerlevel`).
 
     Args:
         soil_layers: A list of SoilLayer data models.
-        water_table_depth: Depth of the water table from the surface (e.g., z=0).
+        water_table_depth: Depth of the water table from the surface (e.g., z=0 is surface).
+        borehole_name: Name for the borehole.
+        borehole_coords: (x,y) coordinates for the borehole.
 
     Returns:
         A list of string commands for PLAXIS.
     """
     commands = []
-    print(f"STUB: Generating soil stratigraphy commands for {len(soil_layers)} layers.")
+    print(f"Generating soil stratigraphy commands for {len(soil_layers)} layers in borehole '{borehole_name}'.")
 
-    commands.append(f"# --- Soil Stratigraphy Definition ---")
-    commands.append(f"echo 'Defining soil stratigraphy...'")
+    commands.append(f"# --- Soil Stratigraphy Definition for {borehole_name} ---")
+    commands.append(f"echo 'Defining soil stratigraphy for {borehole_name}...'")
 
-    # Example: Create a borehole at (0,0)
-    # commands.append("CREATE_BOREHOLE bh1 x=0 y=0")
-    commands.append("PLAXIS_API_CALL create_borehole name='BH1' x=0 y=0")
+    # Create a borehole (from all.md: borehole <x y>)
+    commands.append(f"borehole {borehole_coords[0]} {borehole_coords[1]} \"Name\" \"{borehole_name}\"")
 
-    current_depth_or_elevation = 0.0 # Assuming ground surface is at z=0 and layers go downwards
+    # For API style, it might be:
+    # commands.append(f"bh = g_i.borehole(x={borehole_coords[0]}, y={borehole_coords[1]}, name='{borehole_name}')")
 
-    for i, layer in enumerate(soil_layers):
-        layer_name = layer.name or f"Layer{i+1}"
-        # Material name needs to be consistent with how it was defined in generate_material_commands
-        material_obj = layer.material
-        mat_name = f"{material_obj.model_name or 'DefaultMaterial'}_{material_obj.cohesion or 0}_{material_obj.friction_angle or 0}"
-        mat_name = "".join(c if c.isalnum() or c in ['_'] else '' for c in mat_name)
+    current_z_elevation = 0.0 # Assuming ground surface is at z=0 and layers go downwards
 
+    for i, layer_model in enumerate(soil_layers):
+        # Material name must match how it was defined in generate_material_commands (sanitized name)
+        material_obj = layer_model.material
+        base_name = getattr(material_obj, 'Identification', material_obj.model_name or 'DefaultMaterial')
+        sanitized_mat_name = "".join(c if c.isalnum() else '_' for c in base_name)
+        if not sanitized_mat_name or sanitized_mat_name[0].isdigit():
+            sanitized_mat_name = "Mat_" + sanitized_mat_name
 
-        if layer.thickness is None:
-            print(f"Warning: Layer '{layer_name}' has no thickness. Skipping.")
+        if layer_model.thickness is None:
+            print(f"Warning: Layer '{layer_model.name or i}' has no thickness. Skipping.")
+            commands.append(f"# SKIPPING LAYER: {layer_model.name or i} - No thickness defined.")
             continue
 
-        # Example: Add soil layer to borehole
-        # commands.append(f"ADD_SOIL_LAYER borehole=bh1 top_elev={current_depth_or_elevation} thickness={layer.thickness} material='{mat_name}' name='{layer_name}'")
+        # Add soil layer to borehole (from all.md: soillayer <h> | <bh_obj> <h>)
+        # This command seems to add a layer of thickness <h> at the current bottom of the borehole.
+        # Then assign material to it.
+        # The object name for the created soil layer is often Soillayers[-1] or similar.
+        # We need to refer to the borehole when setting levels and materials.
 
-        # Assuming top_of_layer is defined from z=0 downwards.
-        # If using elevations, this logic would change.
-        bottom_of_layer = current_depth_or_elevation - layer.thickness
+        # Command: soillayer <bh_obj> <h> (adds layer of thickness h to borehole)
+        # This command creates a soillayer object, e.g., SoilLayer_1
+        # Then: set <bh_obj>.SoilLayers[idx].Material <mat_obj>
+        # And: setsoillayerlevel <bh_obj> <idx_boundary> <level_z>
 
-        commands.append(
-            f"PLAXIS_API_CALL add_soil_to_borehole borehole_name='BH1' "
-            f"top_elevation={current_depth_or_elevation} " # Or however PLAXIS defines this
-            f"bottom_elevation={bottom_of_layer} " # Or thickness={layer.thickness}
-            f"material_name='{mat_name}' layer_name='{layer_name}'"
-        )
-        current_depth_or_elevation = bottom_of_layer # Update for next layer's top
+        # Step 1: Add a generic layer of given thickness to the borehole
+        # The 'soillayer <bh_obj> <h>' command from all.md adds a layer of thickness 'h'
+        # at the current bottom of the specified borehole.
+        # This seems simpler than creating a global soillayer and then assigning.
+        commands.append(f"soillayer {borehole_name} {layer_model.thickness}")
+        # The newly added layer is typically g_i.SoilLayers[-1] or can be referenced via borehole.
+        # e.g., {borehole_name}.SoilLayers[-1].Material = {sanitized_mat_name}
+        # For CLI, this might be: set {borehole_name}.SoilsLayerList[-1].Material {sanitized_mat_name}
+        # Or setmaterial Soillayer_<idx> <material_name> after identifying the Soillayer object.
+
+        # The `setsoillayerlevel` command from all.md seems more appropriate for defining layer boundaries.
+        # setsoillayerlevel <bh_obj> <level_index> <z_coordinate>
+        # Level 0 is top surface, Level 1 is bottom of first layer, etc.
+
+        # Set top of this layer (which is bottom of previous, or surface for first layer)
+        commands.append(f"setsoillayerlevel {borehole_name} {i} {current_z_elevation}")
+
+        # Calculate bottom elevation of this layer
+        current_z_elevation -= layer_model.thickness
+
+        # Set bottom of this layer
+        commands.append(f"setsoillayerlevel {borehole_name} {i+1} {current_z_elevation}")
+
+        # Assign material to this layer
+        # This assumes we can identify the layer object created by its index in the borehole
+        # The exact syntax for referencing a specific layer within a borehole for material assignment
+        # needs to be precise for PLAXIS.
+        # Conceptual:
+        commands.append(f"set {borehole_name}.SoilLayers[{i}].Material {sanitized_mat_name}")
+        # Alternative, if layers are globally indexed and then assigned:
+        # commands.append(f"setmaterial SoilLayer_{i+1}_{borehole_name_suffix} {sanitized_mat_name}")
+        # For now, use the direct property access style shown in some `set` examples in all.md
+        commands.append(f"echo 'Defined layer {i+1} in {borehole_name}: Top Z={current_z_elevation + layer_model.thickness}, Bottom Z={current_z_elevation}, Material={sanitized_mat_name}'")
+
 
     if water_table_depth is not None:
-        # Example: Define phreatic level
-        # commands.append(f"SET_PHREATIC_LEVEL borehole=bh1 level={-water_table_depth}") # If z=0 is surface
-        commands.append(f"PLAXIS_API_CALL set_water_level borehole_name='BH1' depth_from_surface={water_table_depth}")
+        # From all.md: set <bh_obj>.Head <z_coord_of_water_head>
+        # Assuming water_table_depth is depth from surface (z=0), so head is at z = -water_table_depth
+        water_head_elevation = -abs(water_table_depth) # Ensure it's negative or zero
+        commands.append(f"set {borehole_name}.Head {water_head_elevation}")
+        commands.append(f"echo 'Set water head for {borehole_name} at Z={water_head_elevation}'")
 
-    commands.append(f"echo 'Soil stratigraphy definition complete (stub).'")
+    commands.append(f"echo 'Soil stratigraphy for {borehole_name} definition complete.'")
 
-    if not commands:
-        commands.append("# STUB: No soil stratigraphy commands generated.")
     return commands
 
 if __name__ == '__main__':
