@@ -12,11 +12,14 @@ from PySide6.QtGui import QAction, QIcon # QIcon will be conceptual for now
 from PySide6.QtCore import Qt, QSize
 
 # Backend imports
-from backend.models import ProjectSettings
-from backend.project_io import save_project, load_project # Now using these
+from backend.models import ProjectSettings, SpudcanGeometry # Added SpudcanGeometry
+from backend.project_io import save_project, load_project
+
+# Frontend imports
+from .widgets.spudcan_geometry_widget import SpudcanGeometryWidget
 
 # Qt Imports
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QFileDialog, QLabel, QVBoxLayout, QWidget # Added some for clarity
 
 class MainWindow(QMainWindow):
     """
@@ -42,9 +45,18 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.view_stack)
 
         # Add a couple of placeholder pages to the stack
+        # self.page_input will now host more complex widgets
         self.page_input = QWidget()
-        self.page_input_layout = QVBoxLayout(self.page_input)
-        self.page_input_layout.addWidget(QLabel("Input Parameters Section (Placeholder)"))
+        self.page_input_layout = QVBoxLayout(self.page_input) # Main layout for all input sections
+        # self.page_input_layout.addWidget(QLabel("Input Parameters Section (Placeholder)")) # Remove old label
+
+        # Instantiate and add SpudcanGeometryWidget to the input page
+        self.spudcan_geometry_widget = SpudcanGeometryWidget()
+        self.spudcan_geometry_widget.data_changed.connect(lambda: self.mark_project_modified(True))
+        self.page_input_layout.addWidget(self.spudcan_geometry_widget)
+        # TODO: Add other input section widgets here later (e.g., Soil, Loading)
+        self.page_input_layout.addStretch() # Pushes widgets to the top
+
         self.view_stack.addWidget(self.page_input)
 
         self.page_results = QWidget()
@@ -343,14 +355,29 @@ class MainWindow(QMainWindow):
         if not self.current_project_data:
             self.current_project_data = ProjectSettings() # Should not happen if new/open logic is correct
 
-        print("Gathering data from UI fields into self.current_project_data model (Conceptual implementation).")
-        # Example:
-        # self.current_project_data.spudcan.diameter = self.spudcan_diameter_input.value()
-        # self.current_project_data.project_name = self.project_name_input.text()
-        # ... and so on for all relevant UI fields.
+        print("Gathering data from UI fields into self.current_project_data model.")
 
-        # For now, let's simulate a change to project name if it's being saved first time
-        if self.current_project_data and (self.current_project_data.project_name == "Untitled Project" or not self.current_project_data.project_name) and self.current_project_path:
+        # Gather from SpudcanGeometryWidget
+        if hasattr(self, 'spudcan_geometry_widget'):
+            spudcan_data_dict = self.spudcan_geometry_widget.gather_data()
+            # Convert dict to SpudcanGeometry model instance
+            # Assuming keys in spudcan_data_dict match SpudcanGeometry fields
+            self.current_project_data.spudcan = SpudcanGeometry(
+                diameter=spudcan_data_dict.get('diameter'),
+                height_cone_angle=spudcan_data_dict.get('height_cone_angle'),
+                # spudcan_type=spudcan_data_dict.get('spudcan_type') # Add if type is part of model
+            )
+            print(f"Updated project_data.spudcan: {self.current_project_data.spudcan}")
+
+        # Example: Gather project name (if there was a dedicated field)
+        # if hasattr(self, 'project_name_input_field'):
+        #    self.current_project_data.project_name = self.project_name_input_field.text()
+
+        # ... and so on for all relevant UI fields / other input widgets.
+
+        # Update project name from path if it's still default and path exists
+        if (self.current_project_data.project_name == "Untitled Project" or \
+            not self.current_project_data.project_name) and self.current_project_path:
              base_name = self.current_project_path.split('/')[-1].split('\\')[-1]
              self.current_project_data.project_name = base_name.split('.')[0] if '.' in base_name else base_name
 
@@ -366,8 +393,9 @@ class MainWindow(QMainWindow):
         print("Populating UI fields from self.current_project_data model (Conceptual implementation).")
         # Example:
         # self.project_name_input.setText(self.current_project_data.project_name or "")
-        # self.spudcan_diameter_input.setValue(self.current_project_data.spudcan.diameter or 0.0)
-        # ... and so on for all relevant UI fields.
+        if hasattr(self, 'spudcan_geometry_widget') and self.current_project_data.spudcan:
+            self.spudcan_geometry_widget.load_data(self.current_project_data.spudcan)
+        # ... and so on for all relevant UI fields / other input widgets.
 
 
     def mark_project_modified(self, modified_status: bool = True):
@@ -375,9 +403,12 @@ class MainWindow(QMainWindow):
             return
 
         # Only update if the status actually changes
+        # Also, ensure that there's actually a project to modify the status for.
+        # The save button should only be enabled if there's data AND it's modified.
         if self.project_modified != modified_status:
             self.project_modified = modified_status
-            self.action_save_project.setEnabled(self.project_modified)
+            can_save = self.project_modified and bool(self.current_project_data)
+            self.action_save_project.setEnabled(can_save)
             self.update_window_title()
 
 
