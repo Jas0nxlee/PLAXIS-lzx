@@ -78,21 +78,27 @@ def generate_loading_condition_callables(loading_model: LoadingConditions) -> Li
         displacement_name = "Spudcan_TargetPenetration"
 
         def define_target_displacement_callable(g_i: Any) -> None:
-            print(f"  PLAXIS API CALL: Defining PointDisplacement '{displacement_name}' at {load_application_point} with uz={target_displacement_uz}")
+            print(f"  PLAXIS API CALL: Defining PointDisplacement (using pointdispl) '{displacement_name}' at {load_application_point} with uz={target_displacement_uz}")
             try:
-                # Example: g_i.pointdisplacement(coordinates, Name="name", uz=value, Displacement_z="Prescribed")
-                # The PLAXIS API for prescribed displacement needs to be verified.
-                # It might be `g_i.prescribeddisplacement` or similar.
-                # `all.md` suggests `pointdispl <point_obj> "uz" <value> "Displacement_z" "Prescribed"`
-                # This implies creating a point object first, then applying pointdispl.
-                # For simplicity, if g_i.pointdisplacement exists and takes coords directly:
-                g_i.pointdisplacement(load_application_point, Name=displacement_name, uz=target_displacement_uz, Displacement_z="Prescribed")
-                # If it requires a point object:
-                # ref_point_obj = g_i.point(load_application_point[0], load_application_point[1], load_application_point[2])
-                # g_i.pointdisplacement(ref_point_obj, Name=displacement_name, uz=target_displacement_uz, Displacement_z="Prescribed")
-                print(f"    PointDisplacement '{displacement_name}' defined.")
+                # Documentation uses g_i.pointdispl
+                # Example from docs: point_g, pointdisplacement_g = g_i.pointdispl((5, 6, 7), "Displacement_x", "Fixed", ...)
+                # This suggests it can create the point and the displacement feature, and set properties.
+                # We assume our simplified call with keyword args for Name, uz, Displacement_z is handled by the scripting layer
+                # or should be mapped to the property-value pair style if direct keywords aren't supported.
+                # Correcting command name from pointdisplacement to pointdispl.
+                # The properties like Name, uz, Displacement_z might need to be passed as sequential args
+                # e.g. g_i.pointdispl(coords, "Name", name, "uz", val, "Displacement_z", "Prescribed")
+                # For now, keeping keyword style, assuming plxscripting handles it or it's a simplified representation.
+                # A more robust call based on docs:
+                # point_obj, displ_feature = g_i.pointdispl(load_application_point,
+                #                                           "Name", displacement_name,
+                #                                           "uz", target_displacement_uz,
+                #                                           "Displacement_z", "Prescribed")
+                # For this refinement, only changing the command name:
+                g_i.pointdispl(load_application_point, Name=displacement_name, uz=target_displacement_uz, Displacement_z="Prescribed")
+                print(f"    PointDisplacement '{displacement_name}' defined using pointdispl.")
             except Exception as e:
-                print(f"    ERROR defining PointDisplacement '{displacement_name}': {e}")
+                print(f"    ERROR defining PointDisplacement '{displacement_name}' using pointdispl: {e}")
                 raise
         callables.append(define_target_displacement_callable)
 
@@ -170,24 +176,28 @@ def generate_analysis_control_callables(
             coarseness_setting = control_model.meshing_global_coarseness or "Medium"
             coarseness_factor = mesh_coarseness_map.get(coarseness_setting, 0.05)
 
-            # Set global mesh coarseness. The exact API path might be g_i.Mesh.CoarsenessFactor,
-            # g_i.MeshOptions.Coarseness, or similar. Using g_i.command for robustness if path is uncertain.
-            # Example: g_i.set(g_i.Mesh.ElementDistribution, coarseness_setting) if it takes string.
-            # Or: g_i.command(f"set Mesh.CoarsenessFactor {coarseness_factor}")
-            # For now, conceptual set:
-            if hasattr(g_i, 'Mesh') and hasattr(g_i.Mesh, 'CoarsenessFactor'):
-                 g_i.set(g_i.Mesh.CoarsenessFactor, coarseness_factor)
-                 print(f"    Set Mesh.CoarsenessFactor to {coarseness_factor} (for '{coarseness_setting}').")
+            # Set global mesh coarseness.
+            # Documentation for `mesh` command shows: mesh(<Factor>) or mesh("Coarseness", <Factor>)
+            coarseness_setting = control_model.meshing_global_coarseness
+            if coarseness_setting and coarseness_setting != "Medium": # "Medium" is often default
+                mesh_coarseness_map = {
+                    "VeryCoarse": 0.2, "Coarse": 0.1,
+                    "Fine": 0.025, "VeryFine": 0.01
+                } # Medium would be around 0.05
+                coarseness_factor = mesh_coarseness_map.get(coarseness_setting)
+                if coarseness_factor is not None:
+                    g_i.mesh("Coarseness", coarseness_factor) # Pass as argument to mesh
+                    print(f"    Mesh generation triggered with Coarseness Factor: {coarseness_factor} (for '{coarseness_setting}').")
+                else:
+                    g_i.mesh() # Fallback to default mesh if mapping fails
+                    print(f"    Mesh generation triggered (default). Unknown coarseness '{coarseness_setting}'.")
             else:
-                 g_i.command(f"coarsenessfactor {coarseness_factor}") # Fallback to generic command
-                 print(f"    Attempted to set coarseness factor to {coarseness_factor} via command.")
+                g_i.mesh() # Generate the mesh with default (Medium) coarseness
+                print("    Mesh generation triggered (default/Medium coarseness).")
 
             # TODO: Add local mesh refinement for spudcan if control_model.meshing_refinement_spudcan is True.
             # This would involve finding the spudcan volume (e.g., "Spudcan_ConeVolume") and applying
-            # a refinement factor, e.g., g_i.refinemesh(g_i.Volumes["Spudcan_ConeVolume"], factor=0.5)
-
-            g_i.mesh() # Generate the mesh
-            print("    Mesh generation triggered.")
+            # a refinement factor, e.g., g_i.refinemesh(g_i.Volumes["Spudcan_ConeVolume"], factor=0.5) or similar.
 
             g_i.gotostages() # Switch back to staged construction mode
             print("    Switched back to staged construction mode.")
@@ -198,40 +208,54 @@ def generate_analysis_control_callables(
 
     # --- Phase Definition Callables ---
     # These need to be appended in sequence.
+    # We'll keep track of the actual phase objects to pass to subsequent g_i.phase calls
 
     # Initial Phase
     initial_phase_name = "InitialPhase" # Standard PLAXIS name for the first phase
+
+    # Store phase objects as they are created/retrieved for linking
+    # This dict will live within the scope of generate_analysis_control_callables
+    # and be captured by the lambda callables.
+    phase_objects_map = {}
+
     def initial_phase_setup_callable(g_i: Any) -> None:
+        nonlocal phase_objects_map # Allow modification of the outer scope variable
         print(f"  PLAXIS API CALL: Setting up '{initial_phase_name}'.")
         try:
             # The InitialPhase (Phase_1 in CLI) usually exists by default. We configure it.
-            # Accessing it might be g_i.Phases[0] or g_i.InitialPhase or g_i.Phases["InitialPhase"]
-            # For robustness, assume it's the first phase if accessible by index.
-            initial_phase_obj = g_i.Phases[0] if hasattr(g_i, 'Phases') and g_i.Phases else None
-            if not initial_phase_obj: # If it cannot be accessed by index, try by common name
-                if hasattr(g_i.Phases, initial_phase_name): initial_phase_obj = g_i.Phases[initial_phase_name]
+            # Accessing it might be g_i.Phases[0] or by its default name.
+            retrieved_initial_phase = None
+            if hasattr(g_i, 'Phases') and g_i.Phases:
+                # Try to find by common name first, as index 0 might not always be 'InitialPhase' if user renamed it.
+                for p in g_i.Phases:
+                    if p.Identification.value == initial_phase_name or p.Name.value == initial_phase_name : # Check both common attributes
+                        retrieved_initial_phase = p
+                        break
+                if not retrieved_initial_phase and g_i.Phases: # Fallback to index 0 if not found by name
+                    retrieved_initial_phase = g_i.Phases[0]
 
-            if not initial_phase_obj:
-                print(f"    ERROR: Could not retrieve InitialPhase object from g_i.Phases.")
-                # As a fallback, try to create it if it's truly missing (unusual for PLAXIS default)
-                # initial_phase_obj = g_i.phase(None, Name=initial_phase_name)
-                # For now, assume it exists and raise if not found.
-                raise PlxScriptingError(f"Could not find or access the default '{initial_phase_name}'.")
+            if not retrieved_initial_phase:
+                # This case should be rare in a standard PLAXIS new project.
+                # If it can happen, creating it might be: initial_phase_obj = g_i.phase(None, Name=initial_phase_name)
+                # For now, assume it always exists or the script should fail.
+                raise Exception(f"Could not retrieve InitialPhase object (expected name: '{initial_phase_name}' or at index 0).")
+
+            phase_objects_map[initial_phase_name] = retrieved_initial_phase
 
             # Set calculation type for initial stresses (e.g., K0Procedure)
             calc_type = control_model.initial_stress_method or "K0Procedure" # Default
-            # Path to DeformCalcType: initial_phase_obj.DeformCalcType or initial_phase_obj.CalculationType
+            # Path to DeformCalcType: retrieved_initial_phase.DeformCalcType or retrieved_initial_phase.CalculationType
             # `all.md` suggests Phase.DeformCalcType
-            g_i.set(initial_phase_obj.DeformCalcType, calc_type)
+            g_i.set(retrieved_initial_phase.DeformCalcType, calc_type)
             print(f"    Set DeformCalcType for '{initial_phase_name}' to '{calc_type}'.")
 
             # Activate all soil volumes and boreholes for initial state
-            # g_i.activateallsoils(initial_phase_obj) - if such a helper exists
+            # g_i.activateallsoils(retrieved_initial_phase) - if such a helper exists
             # Or, iterate g_i.Soils and g_i.Boreholes:
             if hasattr(g_i, 'Soils'):
-                for soil_vol in g_i.Soils: g_i.activate(soil_vol, initial_phase_obj)
+                for soil_vol in g_i.Soils: g_i.activate(soil_vol, retrieved_initial_phase)
             if hasattr(g_i, 'Boreholes'):
-                for bh in g_i.Boreholes: g_i.activate(bh, initial_phase_obj)
+                for bh in g_i.Boreholes: g_i.activate(bh, retrieved_initial_phase)
             # Water conditions are often tied to borehole heads or a global water level,
             # which should be active in this phase.
             print(f"    Activated soils and boreholes in '{initial_phase_name}'.")
@@ -240,8 +264,6 @@ def generate_analysis_control_callables(
             raise
     callables.append(initial_phase_setup_callable)
 
-    previous_phase_name_for_plaxis_api = initial_phase_name # Used by g_i.phase(prev_phase_obj)
-
     # Preloading Phase (optional)
     if loading_conditions_model and loading_conditions_model.vertical_preload is not None and loading_conditions_model.vertical_preload != 0:
         preload_phase_name = "PreloadPhase"
@@ -249,11 +271,16 @@ def generate_analysis_control_callables(
         preload_load_name = "Spudcan_Preload"    # Assumed name from loading_condition_callables
 
         def preload_phase_setup_callable(g_i: Any) -> None:
+            nonlocal phase_objects_map
             print(f"  PLAXIS API CALL: Setting up '{preload_phase_name}'.")
             try:
-                prev_phase_obj = g_i.Phases[previous_phase_name_for_plaxis_api] # Get previous phase object
+                prev_phase_obj = phase_objects_map.get(initial_phase_name)
+                if not prev_phase_obj:
+                    raise Exception(f"PreloadPhase setup: Previous phase '{initial_phase_name}' object not found.")
+
                 current_phase_obj = g_i.phase(prev_phase_obj, Name=preload_phase_name)
-                print(f"    Phase '{preload_phase_name}' created after '{previous_phase_name_for_plaxis_api}'.")
+                phase_objects_map[preload_phase_name] = current_phase_obj
+                print(f"    Phase '{preload_phase_name}' created after '{initial_phase_name}'.")
 
                 g_i.set(current_phase_obj.DeformCalcType, "Plastic") # Common for load application
                 # Activate spudcan geometry and preload
@@ -270,7 +297,9 @@ def generate_analysis_control_callables(
                 print(f"    ERROR during '{preload_phase_name}' setup: {e}")
                 raise
         callables.append(preload_phase_setup_callable)
-        previous_phase_name_for_plaxis_api = preload_phase_name
+        current_previous_phase_name_for_map = preload_phase_name # Update for next phase
+    else:
+        current_previous_phase_name_for_map = initial_phase_name # No preload phase, initial is previous
 
 
     # Penetration Phase (main analysis)
@@ -279,11 +308,16 @@ def generate_analysis_control_callables(
     target_disp_name = "Spudcan_TargetPenetration" # From loading_condition_callables
 
     def penetration_phase_setup_callable(g_i: Any) -> None:
+        nonlocal phase_objects_map
         print(f"  PLAXIS API CALL: Setting up '{penetration_phase_name}'.")
         try:
-            prev_phase_obj = g_i.Phases[previous_phase_name_for_plaxis_api]
+            prev_phase_obj = phase_objects_map.get(current_previous_phase_name_for_map)
+            if not prev_phase_obj:
+                 raise Exception(f"PenetrationPhase setup: Previous phase '{current_previous_phase_name_for_map}' object not found.")
+
             current_phase_obj = g_i.phase(prev_phase_obj, Name=penetration_phase_name)
-            print(f"    Phase '{penetration_phase_name}' created after '{previous_phase_name_for_plaxis_api}'.")
+            phase_objects_map[penetration_phase_name] = current_phase_obj
+            print(f"    Phase '{penetration_phase_name}' created after '{current_previous_phase_name_for_map}'.")
 
             g_i.set(current_phase_obj.DeformCalcType, "Plastic") # Or "Consolidation" if time-dependent effects are key
 
