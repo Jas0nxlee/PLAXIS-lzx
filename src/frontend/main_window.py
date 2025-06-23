@@ -11,6 +11,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QIcon # QIcon will be conceptual for now
 from PySide6.QtCore import Qt, QSize
 
+# Backend imports
+from backend.models import ProjectSettings
+from backend.project_io import save_project, load_project # Now using these
+
+# Qt Imports
+from PySide6.QtWidgets import QFileDialog
+
 class MainWindow(QMainWindow):
     """
     Main application window.
@@ -18,7 +25,11 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
-        self.setWindowTitle("PLAXIS 3D Spudcan Automation Tool")
+        self.current_project_data: Optional[ProjectSettings] = None
+        self.current_project_path: Optional[str] = None
+        self.project_modified: bool = False
+
+        self.setWindowTitle("Untitled Project - PLAXIS 3D Spudcan Automation Tool")
         self.setGeometry(100, 100, 1200, 800) # x, y, width, height
 
         # Central Widget and Layout (Task 4.2, 4.4)
@@ -61,17 +72,21 @@ class MainWindow(QMainWindow):
         # self.action_new_project.setIcon(QIcon(":/icons/new.png")) # Conceptual icon path
 
         self.action_open_project = QAction("&Open Project...", self)
+        self.action_open_project.setShortcut("Ctrl+O")
         self.action_open_project.setStatusTip("Open an existing project")
         self.action_open_project.triggered.connect(self.on_open_project)
 
         self.action_save_project = QAction("&Save Project", self)
+        self.action_save_project.setShortcut("Ctrl+S")
         self.action_save_project.setStatusTip("Save the current project")
         self.action_save_project.triggered.connect(self.on_save_project)
-        self.action_save_project.setEnabled(False) # Typically disabled until project is modified
+        self.action_save_project.setEnabled(False)
 
         self.action_save_project_as = QAction("Save Project &As...", self)
+        # self.action_save_project_as.setShortcut("Ctrl+Shift+S") # Common shortcut
         self.action_save_project_as.setStatusTip("Save the current project under a new name")
         self.action_save_project_as.triggered.connect(self.on_save_project_as)
+        self.action_save_project_as.setEnabled(False) # Enable when there's a project
 
         self.action_settings = QAction("&Settings...", self)
         self.action_settings.setStatusTip("Application settings")
@@ -162,23 +177,217 @@ class MainWindow(QMainWindow):
     def on_new_project(self):
         self.statusBar.showMessage("Action: New Project triggered", 2000)
         print("Action: New Project")
-        # Logic for new project (e.g., clear inputs, reset models) will go here
-        self.action_save_project.setEnabled(True) # Example: enable save after new
+
+        # Optional: Check if current project is modified and prompt to save
+        if self.project_modified:
+            ret = QMessageBox.question(self, "Unsaved Changes",
+                                       "The current project has unsaved changes. Do you want to save them before creating a new project?",
+                                       QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+            if ret == QMessageBox.Save:
+                if not self.on_save_project(): # if save is cancelled, abort new project
+                    return
+            elif ret == QMessageBox.Cancel:
+                return
+
+        self.current_project_data = ProjectSettings()
+        self.current_project_path = None
+        self.project_modified = False # A new, unmodified project
+
+        # TODO: Clear/reset all UI input fields to reflect the new project state
+        print("UI Cleared/Reset for New Project (Conceptual)")
+
+        self.update_window_title()
+        self.action_save_project.setEnabled(False) # Disabled until modified
+        self.action_save_project_as.setEnabled(True) # Can always "Save As" a new project
+        self.statusBar.showMessage("New project created.", 3000)
+
 
     def on_open_project(self):
         self.statusBar.showMessage("Action: Open Project triggered", 2000)
         print("Action: Open Project")
-        # Logic for opening a project file will go here
 
-    def on_save_project(self):
+        # Optional: Check if current project is modified and prompt to save
+        if self.project_modified:
+            ret = QMessageBox.question(self, "Unsaved Changes",
+                                       "The current project has unsaved changes. Do you want to save them before opening a new project?",
+                                       QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+            if ret == QMessageBox.Save:
+                if not self.on_save_project(): # if save is cancelled, abort open
+                    return
+            elif ret == QMessageBox.Cancel:
+                return
+
+        file_dialog = QFileDialog(self, "Open Project", "", "PLAXIS Auto Project (*.plaxauto);;All Files (*)")
+        file_dialog.setAcceptMode(QFileDialog.AcceptOpen) # This is default for getOpenFileName but explicit
+
+        if file_dialog.exec():
+            filepath = file_dialog.selectedFiles()[0]
+            if filepath:
+                loaded_data = load_project(filepath)
+                if loaded_data:
+                    self.current_project_data = loaded_data
+                    self.current_project_path = filepath
+                    self.project_modified = False
+
+                    # TODO: Update all UI input fields from self.current_project_data
+                    self._update_ui_from_project_model() # Placeholder for actual UI update
+
+                    self.update_window_title()
+                    self.action_save_project.setEnabled(False) # Just loaded, not modified yet
+                    self.action_save_project_as.setEnabled(True) # Can always "Save As"
+                    self.statusBar.showMessage(f"Project '{filepath}' loaded successfully.", 3000)
+                else:
+                    QMessageBox.critical(self, "Load Error",
+                                         f"Failed to load project from {filepath}.\n"
+                                         "The file may be corrupted or not a valid project file.")
+        else:
+            self.statusBar.showMessage("Open project cancelled.", 2000)
+
+
+    def on_save_project(self) -> bool: # Return bool to indicate success/failure/cancel
         self.statusBar.showMessage("Action: Save Project triggered", 2000)
         print("Action: Save Project")
-        # Logic for saving the current project will go here
+        if not self.current_project_data:
+            QMessageBox.warning(self, "No Project", "There is no project data to save.")
+            return False
 
-    def on_save_project_as(self):
+        if not self.current_project_path: # If no path, effectively "Save As"
+            return self.on_save_project_as()
+        else:
+            # TODO: Gather data from UI into self.current_project_data
+            # For now, assume self.current_project_data is kept up-to-date by UI elements
+            print("Conceptual: Ensuring self.current_project_data is up-to-date from UI.")
+            self._gather_data_from_ui_to_project_model() # Placeholder for actual data gathering
+
+            success = save_project(self.current_project_data, self.current_project_path)
+            if success:
+                self.project_modified = False
+                self.action_save_project.setEnabled(False)
+                self.statusBar.showMessage(f"Project saved to {self.current_project_path}", 3000)
+                self.update_window_title()
+                return True
+            else:
+                QMessageBox.critical(self, "Save Error",
+                                     f"Failed to save project to {self.current_project_path}.\n"
+                                     "Check file permissions or see logs for more details.")
+                return False
+
+    def on_save_project_as(self) -> bool:
         self.statusBar.showMessage("Action: Save Project As triggered", 2000)
         print("Action: Save Project As")
-        # Logic for save as will go here
+        if not self.current_project_data:
+            QMessageBox.warning(self, "No Project", "There is no project data to save.")
+            return False
+
+        # TODO: Gather data from UI into self.current_project_data (if not already up-to-date)
+        print("Conceptual: Ensuring self.current_project_data is up-to-date from UI for Save As.")
+        self._gather_data_from_ui_to_project_model() # Placeholder
+
+        # Use QFileDialog to get save path
+        # Default directory could be user's documents or last used path
+        default_filename = self.current_project_data.project_name or "UntitledProject"
+        if self.current_project_path:
+            default_filename = self.current_project_path.split('/')[-1].split('\\')[-1]
+
+        file_dialog = QFileDialog(self, "Save Project As", "", "PLAXIS Auto Project (*.plaxauto);;All Files (*)")
+        file_dialog.setAcceptMode(QFileDialog.AcceptSave)
+        file_dialog.setDefaultSuffix("plaxauto")
+        file_dialog.selectFile(default_filename) # Suggest a filename
+
+        if file_dialog.exec():
+            new_path = file_dialog.selectedFiles()[0]
+            if new_path:
+                self.current_project_path = new_path
+                # Update project_name in data if it's still "Untitled Project" or to match filename
+                if self.current_project_data.project_name == "Untitled Project" or not self.current_project_data.project_name:
+                    base_name = new_path.split('/')[-1].split('\\')[-1]
+                    self.current_project_data.project_name = base_name.split('.')[0] if '.' in base_name else base_name
+
+                success = save_project(self.current_project_data, self.current_project_path)
+                if success:
+                    self.project_modified = False
+                    self.action_save_project.setEnabled(False) # Save is now up-to-date
+                    self.statusBar.showMessage(f"Project saved to {self.current_project_path}", 3000)
+                    self.update_window_title()
+                    return True
+                else:
+                    QMessageBox.critical(self, "Save Error",
+                                         f"Failed to save project to {self.current_project_path}.\n"
+                                         "Check file permissions or see logs for more details.")
+                    # self.current_project_path = None # Optionally reset path if save failed, or keep it for retry
+                    return False
+        return False # User cancelled Save As dialog
+
+
+    def update_window_title(self):
+        base_title = "PLAXIS 3D Spudcan Automation Tool"
+        project_name_display = "Untitled Project"
+
+        if self.current_project_path:
+            project_name_display = self.current_project_path.split('/')[-1].split('\\')[-1]
+        elif self.current_project_data and self.current_project_data.project_name:
+             project_name_display = self.current_project_data.project_name
+
+        modified_indicator = "*" if self.project_modified else ""
+
+        self.setWindowTitle(f"{project_name_display}{modified_indicator} - {base_title}")
+
+
+    # Placeholder for marking project as modified, should be called by UI input changes
+    def _gather_data_from_ui_to_project_model(self):
+        """
+        Conceptual: This method will be responsible for collecting all data
+        from the UI input fields and updating self.current_project_data.
+        This needs to be called before saving.
+        """
+        if not self.current_project_data:
+            self.current_project_data = ProjectSettings() # Should not happen if new/open logic is correct
+
+        print("Gathering data from UI fields into self.current_project_data model (Conceptual implementation).")
+        # Example:
+        # self.current_project_data.spudcan.diameter = self.spudcan_diameter_input.value()
+        # self.current_project_data.project_name = self.project_name_input.text()
+        # ... and so on for all relevant UI fields.
+
+        # For now, let's simulate a change to project name if it's being saved first time
+        if self.current_project_data and (self.current_project_data.project_name == "Untitled Project" or not self.current_project_data.project_name) and self.current_project_path:
+             base_name = self.current_project_path.split('/')[-1].split('\\')[-1]
+             self.current_project_data.project_name = base_name.split('.')[0] if '.' in base_name else base_name
+
+    def _update_ui_from_project_model(self):
+        """
+        Conceptual: This method will be responsible for populating all UI
+        input fields with data from self.current_project_data.
+        This needs to be called after loading a project or creating a new one (for defaults).
+        """
+        if not self.current_project_data:
+            return # Should not happen
+
+        print("Populating UI fields from self.current_project_data model (Conceptual implementation).")
+        # Example:
+        # self.project_name_input.setText(self.current_project_data.project_name or "")
+        # self.spudcan_diameter_input.setValue(self.current_project_data.spudcan.diameter or 0.0)
+        # ... and so on for all relevant UI fields.
+
+
+    def mark_project_modified(self, modified_status: bool = True):
+        if not self.current_project_data: # Cannot mark modified if no project is loaded/newed
+            return
+
+        # Only update if the status actually changes
+        if self.project_modified != modified_status:
+            self.project_modified = modified_status
+            self.action_save_project.setEnabled(self.project_modified)
+            self.update_window_title()
+
+
+    def on_settings(self):
+    def mark_project_modified(self, modified_status: bool = True):
+        if self.project_modified != modified_status:
+            self.project_modified = modified_status
+            self.action_save_project.setEnabled(self.project_modified and bool(self.current_project_data))
+            self.update_window_title()
+
 
     def on_settings(self):
         self.statusBar.showMessage("Action: Settings triggered", 2000)
