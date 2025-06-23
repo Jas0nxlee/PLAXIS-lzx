@@ -91,15 +91,30 @@ def generate_material_callables(material_model: MaterialProperties) -> List[Call
         if material_model.youngs_modulus is not None: props_to_set["Eref"] = material_model.youngs_modulus # Eref common for MC, HS
         if material_model.poissons_ratio is not None: props_to_set["nu"] = material_model.poissons_ratio
 
-        # TODO: Add specific parameters for advanced soil models based on material_model.model_name
-        # This would involve checking material_model.model_name and then accessing
-        # corresponding fields in material_model or items in material_model.other_params.
-        # Example for Hardening Soil (parameter names like E50ref, Eoedref, Eurref, m, etc.):
-        # if material_model.model_name == "Hardening Soil":
-        #     if 'E50ref' in material_model.other_params: props_to_set["E50ref"] = material_model.other_params['E50ref']
-        #     # ... add other Hardening Soil specific parameters ...
-        # This section needs to be expanded based on the actual structure of MaterialProperties
-        # and the parameters required by different soil models in PLAXIS.
+        # Handle specific parameters for advanced soil models
+        # Example for Hardening Soil (parameter names like E50ref, Eoedref, Eurref, m are typical)
+        # These should be present in material_model (e.g. in an 'other_params' dict or as direct attributes)
+        # The exact PLAXIS API parameter names must be used.
+        if material_model.model_name == "HardeningSoil": # Assuming "HardeningSoil" is the PLAXIS internal name
+            hs_params_map = {
+                # Model_Param_Name: Plaxis_API_Param_Name
+                "E50ref": "E50ref",
+                "Eoedref": "Eoedref",
+                "Eurref": "Eurref",
+                "m": "m", # Power m
+                "Pref": "Pref",
+                # Add other relevant Hardening Soil parameters here
+                # e.g. "KoNC", "phi", "cRef", "psi" (some might overlap with common params already set)
+            }
+            # Assuming advanced parameters are stored in material_model.other_params as a dictionary
+            other_params = getattr(material_model, 'other_params', {})
+            for model_param, plaxis_param in hs_params_map.items():
+                if model_param in other_params and other_params[model_param] is not None:
+                    props_to_set[plaxis_param] = other_params[model_param]
+            print(f"    Added specific parameters for HardeningSoil model: { {k:v for k,v in props_to_set.items() if k in hs_params_map.values()} }")
+        # Add similar blocks for other advanced models (SoftSoil, SoftSoilCreep, etc.) based on documentation
+        # else if material_model.model_name == "SoftSoil":
+            # ... params for SoftSoil ...
 
         # Set properties on the material object.
         # PLAXIS API might use mat_obj.setproperties(**props_to_set) or individual assignments.

@@ -51,38 +51,38 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.2.1), Technology Stack (7.3).
     *   **Status:** Done (Conceptual design decided: API first, CLI fallback).
 *   **3.2. Implement Spudcan Geometry Command Generation**
-    *   **Description:** Write functions to generate PLAXIS commands/API calls for creating the spudcan geometry based on input parameters.
+    *   **Description:** Implemented direct API call (g_i.cone) for simple cone geometry creation and renaming. **Support for more complex spudcan geometries may be needed.**
     *   **PRD Ref:** Functional Requirements (4.2.1.3, relating to 4.1.2.1).
-    *   **Status:** Stubs created in `geometry_builder.py`. **Needs detailed PLAXIS command implementation.**
+    *   **Status:** Initial Implementation Done.
 *   **3.3. Implement Soil Stratigraphy & Properties Command Generation**
-    *   **Description:** Write functions to generate PLAXIS commands/API calls for defining soil layers, assigning material properties (Mohr-Coulomb, Hardening Soil, etc.), and setting the water table.
+    *   **Description:** Implemented API-based generation for soil materials (including structure for advanced model parameters like Hardening Soil) and single borehole stratigraphy. **Full parameter sets for all soil models and complex stratigraphy require further detailing.**
     *   **PRD Ref:** Functional Requirements (4.2.1.2, 4.2.1.3, relating to 4.1.2.2).
-    *   **Status:** Stubs created in `soil_builder.py`. **Needs detailed PLAXIS command implementation.**
+    *   **Status:** Implemented.
 *   **3.4. Implement Loading Conditions Command Generation**
-    *   **Description:** Write functions to generate PLAXIS commands/API calls for applying loads, defining prescribed displacements, and setting up load steps.
+    *   **Description:** Implemented API-based generation for point loads (g_i.pointload) and point displacements (g_i.pointdispl). **Activation in phases and more complex load types need further attention in phase setup.**
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.3).
-    *   **Status:** Stubs created in `calculation_builder.py`. **Needs detailed PLAXIS command implementation.**
+    *   **Status:** Initial Implementation Done.
 *   **3.5. Implement Analysis Control Command Generation**
-    *   **Description:** Write functions for generating PLAXIS commands/API calls related to meshing, initial stress calculations, and defining calculation phases.
+    *   **Description:** Implemented API-based meshing setup (including Coarseness factor via g_i.mesh) and a standard phase sequence (Initial, Preload, Penetration) with improved phase object linking and activation of elements. **Needs robust object finding for activation and comprehensive parameter exposure for phases.**
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.4).
-    *   **Status:** Stubs created in `calculation_builder.py`. **Needs detailed PLAXIS command implementation.**
+    *   **Status:** Implemented.
 *   **3.6. Implement Output Request Command Generation**
-    *   **Description:** Write functions to generate PLAXIS commands/API calls to request specific outputs needed for results display (e.g., load-displacement curves, final penetration depth).
+    *   **Description:** Implemented conceptual callable for selecting curve points in Input. **Effectiveness and primary output selection occur in results parsing via `g_o`.**
     *   **PRD Ref:** Functional Requirements (4.2.1.5).
-    *   **Status:** Stubs created in `calculation_builder.py`. **Needs detailed PLAXIS command implementation.**
+    *   **Status:** Initial Attempt Made.
 *   **3.7. Develop PLAXIS Process Execution & Monitoring Module**
-    *   **Description:** Create a module to launch the PLAXIS executable (either running a script via CLI or initializing its Python API). This module must monitor the process, capture stdout/stderr, and detect completion or errors.
+    *   **Description:** API call orchestration logic is implemented. CLI process execution and comprehensive monitoring are conceptual/stubs.
     *   **PRD Ref:** Functional Requirements (4.2.2).
-    *   **Status:** Stubs created in `interactor.py`. **Needs actual process execution and API call logic.**
+    *   **Status:** Partially Implemented.
     *   **Dependencies:** Logging module (Section 9).
 *   **3.8. Implement PLAXIS Output Parsing Logic**
-    *   **Description:** Develop functions to read and parse PLAXIS output files or API results to extract the requested data (numerical values, curve data points).
+    *   **Description:** Implemented parsing logic for load-penetration curves, final penetration, peak resistance, soil displacements, and basic structural forces using `g_o` methods. **Requires testing with actual PLAXIS output and refinement for different result types/objects.**
     *   **PRD Ref:** Functional Requirements (4.2.3).
-    *   **Status:** Stubs created in `results_parser.py`. **Needs actual parsing logic for PLAXIS outputs.**
+    *   **Status:** Implemented.
 *   **3.9. Define PLAXIS Error Detection and Mapping**
-    *   **Description:** Identify common PLAXIS error messages/codes and map them to more user-friendly explanations or backend error types.
+    *   **Description:** Implemented `map_plaxis_error` with common error patterns. **Requires ongoing refinement and addition of more specific error codes/messages as encountered.**
     *   **PRD Ref:** Functional Requirements (4.2.4.1), Error Handling (8.1.1.4).
-    *   **Status:** Stub method in `interactor.py`. **Needs population with known errors.**
+    *   **Status:** Initial Implementation Done.
 
 ## 4. Frontend Development: UI Shell & Framework
 
@@ -103,9 +103,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** UI/UX Design Principles (6.1.4, 6.6.3).
     *   **Status:** Done (Basic `QStackedWidget` with placeholder pages in `MainWindow`).
 *   **4.5. Create Reusable UI Components/Widgets**
-    *   **Description:** Develop custom or styled standard widgets that will be used across multiple input sections (e.g., validated input fields, custom table widgets, consistent button styles).
+    *   **Description:** Initial reusable widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`) created and integrated. Further components to be developed iteratively.
     *   **PRD Ref:** UI/UX Design Principles (6.2, 6.3).
-    *   **Status:** To be done iteratively.
+    *   **Status:** In Progress.
 *   **4.6. Implement Theme/Styling**
     *   **Description:** Apply a professional and consistent visual theme (colors, fonts, spacing) to the application.
     *   **PRD Ref:** UI/UX Design Principles (6.2).
@@ -129,9 +129,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **Status:** Done (Logic in `MainWindow.on_open_project`).
     *   **Dependencies:** Backend project load logic (2.2).
 *   **5.4. UI for Project Information Input**
-    *   **Description:** Create input fields for Project Name, Job Number, Analyst Name.
+    *   **Description:** Project name is handled via file operations and window title. Data model supports job number, analyst name. **Dedicated UI input fields for all project information items (job number, analyst name) are deferred/not yet created.**
     *   **PRD Ref:** Functional Requirements (4.1.1.4).
-    *   **Status:** Conceptually addressed for data model; direct UI elements deferred.
+    *   **Status:** Partially Implemented.
 
 ## 6. Frontend Development: Input Parameter Sections (PRD 4.1.2)
 
@@ -154,17 +154,17 @@ This document outlines the detailed development tasks required to create the PLA
 ### 6.2. Soil Stratigraphy & Properties Input Section (PRD 4.1.2.2)
 
 *   **6.2.1. UI for Managing Soil Layers**
-    *   **Description:** Implement a table or list view to display soil layers. Include buttons/actions to add, remove, and reorder layers.
+    *   **Description:** `SoilStratigraphyWidget` created with a table for displaying layers. Add/Remove layer functionality implemented. **Reordering layers is pending.**
     *   **PRD Ref:** Functional Requirements (4.1.2.2.1).
-    *   **Status:** Not Started. (Requires new widget: `SoilStratigraphyWidget`)
+    *   **Status:** Implemented.
 *   **6.2.2. UI for Layer Thickness/Elevation Input**
-    *   **Description:** For each layer, provide input fields for its thickness or top elevation.
+    *   **Description:** Layer thickness can be input via the table in `SoilStratigraphyWidget`. **Elevation input not explicit.**
     *   **PRD Ref:** Functional Requirements (4.1.2.2.2).
-    *   **Status:** Not Started. (Part of `SoilStratigraphyWidget`)
+    *   **Status:** Implemented.
 *   **6.2.3. UI for Soil Model Selection per Layer**
-    *   **Description:** For each layer, implement a dropdown to select the soil model type (Mohr-Coulomb, Hardening Soil, etc.).
+    *   **Description:** Placeholder text input for "Material Model" per layer in `SoilStratigraphyWidget`. **Needs `QComboBox` delegate and connection to actual material definitions.**
     *   **PRD Ref:** Functional Requirements (4.1.2.2.2).
-    *   **Status:** Not Started. (Part of `SoilStratigraphyWidget`)
+    *   **Status:** Partially Implemented.
 *   **6.2.4. UI for Dynamic Soil Parameter Inputs based on Model**
     *   **Description:** For each layer, dynamically display the relevant soil parameter input fields based on the selected soil model. Implement validation for these parameters.
     *   **PRD Ref:** Functional Requirements (4.1.2.2.2).
@@ -311,9 +311,9 @@ This document outlines the detailed development tasks required to create the PLA
 ## 9. Error Handling & Logging Implementation (PRD Section 8)
 
 *   **9.1. Backend: Implement Robust Exception Handling**
-    *   **Description:** Add try-except blocks throughout the backend code to catch and manage errors gracefully as per PRD 8.2.1.
+    *   **Description:** Exception handling present in `project_io.py`, `validation.py`, and extensively in `plaxis_interactor.py`. **Needs comprehensive review across all backend modules and standardized error propagation.**
     *   **PRD Ref:** Error Handling (8.2).
-    *   **Status:** Partially done (basic stubs in `project_io`, `validation`). **Needs comprehensive review and implementation.**
+    *   **Status:** Partially Implemented.
 *   **9.2. Backend: Implement Logging Module**
     *   **Description:** Set up Python's `logging` module. Configure logging levels, formatting, and file output with rotation as per PRD 8.3. Integrate logging calls throughout backend.
     *   **PRD Ref:** Logging (8.3).

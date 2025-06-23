@@ -101,39 +101,45 @@ def generate_spudcan_geometry_callables(spudcan_model: SpudcanGeometry) -> List[
         # cone_object = g_i.cone(radius, height, TopRadius=0, BaseCenter=(0,0,0), Axis=(0,0,-1))
         # If it doesn't, one might need to access it via g_i.Volumes[-1] or similar.
 
-        # For demonstration, using g_i.command style if direct API is unknown or complex:
-        # This assumes g_i.command can take these parameters or a string version.
-        # The PLAXIS documentation for `cone` command (from all.md) is:
-        # `cone <Radius (R)> <Height (H)> [<TopRadius (r)>] [<Point (x y z)>] [<Vector (u v w)>]`
-        # Point (x y z) is the center of the cone base. Vector is direction from base to apex.
+        # The PLAXIS documentation for `cone` command (Python API examples) shows:
+        # g_i.cone(Radius, Height, BaseCenter_tuple, Axis_tuple)
+        # BaseCenter is the center of the cone base. AxisVector points from base towards apex.
+        # For a downward pointing cone with base at (0,0,0), BaseCenter is (0,0,0) and Axis is (0,0,-1).
+        # The command returns a list of created objects; the first is usually the volume.
         try:
-            # Attempt direct API call if known, e.g., if there's a g_i.create_cone method
-            # For now, using a conceptual g_i.command() as a placeholder for the actual API sequence.
-            # This is a critical point that needs verification against the PLAXIS API reference.
-            # If `g_i.cone` is a direct method:
-            # cone_obj = g_i.cone(radius, height, 0, (0,0,0), (0,0,-1))
-            # If it's via g_i.command:
-            g_i.command(f"cone {radius} {height} 0 (0 0 0) (0 0 -1)")
-            print(f"    Cone volume created via g_i.command.")
+            # Parameters for our spudcan cone:
+            # Radius: radius
+            # Height: height (calculated positive value)
+            # TopRadius: 0 (implied for g_i.cone, not specified as a separate param in API like CLI)
+            # BaseCenter: (0,0,0)
+            # AxisVector: (0,0,-1) (PLAXIS typically takes Z positive upwards, so -1 for downwards)
 
-            # Rename the last created volume. Accessing Volumes[-1] is common in scripting.
-            # Ensure this is robust; if other volumes were created between command and rename, it might fail.
-            # It's better if g_i.cone returns the object, or if PLAXIS assigns a default name that can be queried.
-            if hasattr(g_i, 'Volumes') and g_i.Volumes:
-                last_volume = g_i.Volumes[-1]
-                g_i.rename(last_volume, spudcan_volume_name)
-                print(f"    Renamed last volume to '{spudcan_volume_name}'.")
-            else:
-                # Fallback if direct renaming isn't straightforward: use command to rename last.
-                # This assumes PLAXIS CLI syntax for renaming the most recent object.
-                g_i.command(f"rename Volumes[-1] {spudcan_volume_name}")
-                print(f"    Attempted rename via g_i.command('rename Volumes[-1] {spudcan_volume_name}').")
+            # Explicitly creating a non-truncated cone.
+            # The documentation examples for `g_i.cone(R, H, BaseCenter, Axis)` seem most appropriate.
+            # Example from docs: volume_g = g_i.cone(2, 5, (1, 2, 3), (5, 7, 12))[0]
+            # Here, (1,2,3) is BaseCenter, (5,7,12) is AxisVector.
+            # For our case: BaseCenter=(0,0,0), AxisVector=(0,0,-1)
+            # Note: PLAXIS might default to Z-axis if AxisVector is omitted for simple cases,
+            # but being explicit is better.
+
+            cone_objects = g_i.cone(radius, height, (0,0,0), (0,0,-1))
+
+            if not cone_objects:
+                raise Exception("g_i.cone command did not return any objects.")
+
+            # Assuming the first object returned is the cone volume
+            cone_volume = cone_objects[0]
+            print(f"    Cone volume created successfully via g_i.cone(). Object: {cone_volume}")
+
+            # Rename the created cone volume
+            g_i.rename(cone_volume, spudcan_volume_name)
+            print(f"    Renamed cone volume to '{spudcan_volume_name}'.")
 
             print(f"  Spudcan cone volume '{spudcan_volume_name}' defined: Diameter={spudcan_model.diameter}, "
                   f"Calculated Height={height:.3f} (from angle {cone_angle_deg} deg).")
         except Exception as e:
             # This catch is general. Specific PlxScriptingError should be caught by _execute_api_commands.
-            print(f"    ERROR during spudcan cone creation/renaming: {e}")
+            print(f"    ERROR during spudcan cone creation/renaming using direct API: {e}")
             # Re-raise or handle appropriately if necessary. For a callable, raising allows
             # _execute_api_commands in PlaxisInteractor to catch and map it.
             raise
