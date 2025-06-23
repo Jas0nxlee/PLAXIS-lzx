@@ -1,0 +1,29 @@
+[flake8]
+# Basic flake8 configuration
+# See https://flake8.pycqa.org/en/latest/user/configuration.html
+
+# Ignore some errors if needed, e.g.:
+# ignore = E203, E266, E501, W503
+# E203: whitespace before ':' (often conflicts with Black)
+# E501: line too long (Black will handle line length)
+# W503: line break before binary operator (Black prefers after)
+ignore = E203, W503
+
+max-line-length = 88
+max-complexity = 10
+
+# Exclude directories from linting
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    venv,
+    *.egg-info
+
+# Per-file ignores can be added if necessary
+# per-file-ignores =
+#    */__init__.py:F401
+
+# Enable select plugins if installed, e.g.
+# select = C,E,F,W,B,B950 (B for flake8-bugbear, B950 for flake8-black)
