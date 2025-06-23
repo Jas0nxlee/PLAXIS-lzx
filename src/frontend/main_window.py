@@ -12,11 +12,12 @@ from PySide6.QtGui import QAction, QIcon # QIcon will be conceptual for now
 from PySide6.QtCore import Qt, QSize
 
 # Backend imports
-from backend.models import ProjectSettings, SpudcanGeometry # Added SpudcanGeometry
+from backend.models import ProjectSettings, SpudcanGeometry, SoilLayer, MaterialProperties # Added Soil types
 from backend.project_io import save_project, load_project
 
 # Frontend imports
 from .widgets.spudcan_geometry_widget import SpudcanGeometryWidget
+from .widgets.soil_stratigraphy_widget import SoilStratigraphyWidget
 
 # Qt Imports
 from PySide6.QtWidgets import QFileDialog, QLabel, QVBoxLayout, QWidget # Added some for clarity
@@ -54,7 +55,13 @@ class MainWindow(QMainWindow):
         self.spudcan_geometry_widget = SpudcanGeometryWidget()
         self.spudcan_geometry_widget.data_changed.connect(lambda: self.mark_project_modified(True))
         self.page_input_layout.addWidget(self.spudcan_geometry_widget)
-        # TODO: Add other input section widgets here later (e.g., Soil, Loading)
+
+        # Instantiate and add SoilStratigraphyWidget to the input page
+        self.soil_stratigraphy_widget = SoilStratigraphyWidget()
+        self.soil_stratigraphy_widget.data_changed.connect(lambda: self.mark_project_modified(True))
+        self.page_input_layout.addWidget(self.soil_stratigraphy_widget)
+
+        # TODO: Add other input section widgets here later (e.g., Loading, AnalysisControl)
         self.page_input_layout.addStretch() # Pushes widgets to the top
 
         self.view_stack.addWidget(self.page_input)
@@ -360,14 +367,30 @@ class MainWindow(QMainWindow):
         # Gather from SpudcanGeometryWidget
         if hasattr(self, 'spudcan_geometry_widget'):
             spudcan_data_dict = self.spudcan_geometry_widget.gather_data()
-            # Convert dict to SpudcanGeometry model instance
-            # Assuming keys in spudcan_data_dict match SpudcanGeometry fields
             self.current_project_data.spudcan = SpudcanGeometry(
                 diameter=spudcan_data_dict.get('diameter'),
-                height_cone_angle=spudcan_data_dict.get('height_cone_angle'),
-                # spudcan_type=spudcan_data_dict.get('spudcan_type') # Add if type is part of model
+                height_cone_angle=spudcan_data_dict.get('height_cone_angle')
+                # spudcan_type will be handled if/when added to model and widget properly
             )
             print(f"Updated project_data.spudcan: {self.current_project_data.spudcan}")
+
+        # Gather from SoilStratigraphyWidget
+        if hasattr(self, 'soil_stratigraphy_widget'):
+            soil_layers_data_list_of_dicts = self.soil_stratigraphy_widget.gather_data()
+            self.current_project_data.soil_stratigraphy = [] # Clear existing
+            for layer_dict in soil_layers_data_list_of_dicts:
+                # Convert dict to SoilLayer and MaterialProperties model instances
+                mat_props = MaterialProperties(
+                    model_name=layer_dict.get("material", {}).get("model_name")
+                    # TODO: Add other material properties here when UI supports them
+                )
+                soil_layer = SoilLayer(
+                    name=layer_dict.get("name"),
+                    thickness=layer_dict.get("thickness"),
+                    material=mat_props
+                )
+                self.current_project_data.soil_stratigraphy.append(soil_layer)
+            print(f"Updated project_data.soil_stratigraphy with {len(self.current_project_data.soil_stratigraphy)} layers.")
 
         # Example: Gather project name (if there was a dedicated field)
         # if hasattr(self, 'project_name_input_field'):
@@ -395,7 +418,11 @@ class MainWindow(QMainWindow):
         # self.project_name_input.setText(self.current_project_data.project_name or "")
         if hasattr(self, 'spudcan_geometry_widget') and self.current_project_data.spudcan:
             self.spudcan_geometry_widget.load_data(self.current_project_data.spudcan)
-        # ... and so on for all relevant UI fields / other input widgets.
+
+        if hasattr(self, 'soil_stratigraphy_widget') and self.current_project_data.soil_stratigraphy is not None:
+            self.soil_stratigraphy_widget.load_data(self.current_project_data.soil_stratigraphy)
+        elif hasattr(self, 'soil_stratigraphy_widget'): # Ensure it's cleared if project_data.soil_stratigraphy is None
+             self.soil_stratigraphy_widget.load_data([])
 
 
     def mark_project_modified(self, modified_status: bool = True):
