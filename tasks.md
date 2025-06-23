@@ -51,19 +51,19 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.2.1), Technology Stack (7.3).
     *   **Status:** Done (Conceptual design decided: API first, CLI fallback).
 *   **3.2. Implement Spudcan Geometry Command Generation**
-    *   **Description:** Implemented command-based generation for simple cone geometry. **Could be enhanced with direct API calls if available/preferred and support for more complex geometries.**
+    *   **Description:** Implemented direct API call (g_i.cone) for simple cone geometry creation and renaming. **Support for more complex spudcan geometries may be needed.**
     *   **PRD Ref:** Functional Requirements (4.2.1.3, relating to 4.1.2.1).
     *   **Status:** Initial Implementation Done.
 *   **3.3. Implement Soil Stratigraphy & Properties Command Generation**
-    *   **Description:** Implemented API-based generation for soil materials and single borehole stratigraphy. **Advanced model parameters and complex stratigraphy might need extensions.**
+    *   **Description:** Implemented API-based generation for soil materials (including structure for advanced model parameters like Hardening Soil) and single borehole stratigraphy. **Full parameter sets for all soil models and complex stratigraphy require further detailing.**
     *   **PRD Ref:** Functional Requirements (4.2.1.2, 4.2.1.3, relating to 4.1.2.2).
     *   **Status:** Implemented.
 *   **3.4. Implement Loading Conditions Command Generation**
-    *   **Description:** Implemented API-based generation for point loads and point displacements. **Activation in phases and more complex load types need further attention in phase setup.**
+    *   **Description:** Implemented API-based generation for point loads (g_i.pointload) and point displacements (g_i.pointdispl). **Activation in phases and more complex load types need further attention in phase setup.**
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.3).
     *   **Status:** Initial Implementation Done.
 *   **3.5. Implement Analysis Control Command Generation**
-    *   **Description:** Implemented API-based meshing setup and a standard phase sequence (Initial, Preload, Penetration) with activation of elements and basic parameter settings. **Needs robust object finding for activation and detailed parameter exposure.**
+    *   **Description:** Implemented API-based meshing setup (including Coarseness factor via g_i.mesh) and a standard phase sequence (Initial, Preload, Penetration) with improved phase object linking and activation of elements. **Needs robust object finding for activation and comprehensive parameter exposure for phases.**
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.4).
     *   **Status:** Implemented.
 *   **3.6. Implement Output Request Command Generation**
