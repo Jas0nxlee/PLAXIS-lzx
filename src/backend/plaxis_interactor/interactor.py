@@ -357,23 +357,69 @@ class PlaxisInteractor:
             #     return False
             # except Exception as e: # Catch other potential errors during subprocess management
             #     print(f"An unexpected error occurred during PLAXIS CLI execution: {e}")
-            #     self.map_plaxis_error(str(e))
-            #     return False
-            #
-            print("STUB: _execute_cli_script - subprocess execution part is conceptual and commented out. Returning True for stub.")
-            return True # Placeholder for successful stub execution
+            # --- Actual Subprocess Execution ---
+            timeout_duration = (self.project_settings.analysis_settings.max_calc_time_seconds
+                                if self.project_settings and
+                                   hasattr(self.project_settings, 'analysis_settings') and # Ensure analysis_settings exists
+                                   self.project_settings.analysis_settings is not None and # Ensure it's not None
+                                   hasattr(self.project_settings.analysis_settings, 'max_calc_time_seconds') and # Ensure field exists
+                                   self.project_settings.analysis_settings.max_calc_time_seconds is not None
+                                else 3600) # Default 1 hour
+
+            try:
+                # Ensure self.plaxis_path is not None before using it
+                if self.plaxis_path is None:
+                    print("Error: PLAXIS executable path is None. Cannot execute CLI script.")
+                    return False
+
+                self.plaxis_process = subprocess.Popen(
+                    cli_command_parts,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, # Ensure text mode for stdout/stderr
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0 # type: ignore # Suppress window on Windows
+                )
+                stdout, stderr = self.plaxis_process.communicate(timeout=timeout_duration) # Blocking call with timeout
+
+                if self.plaxis_process.returncode == 0:
+                    print("PLAXIS script via CLI executed successfully.")
+                    if stdout: print(f"PLAXIS CLI STDOUT:\n{stdout}") # Potentially very verbose, use for debugging
+                    if stderr: print(f"PLAXIS CLI STDERR (on success):\n{stderr}") # PLAXIS sometimes outputs warnings or info to stderr
+                    return True
+                else:
+                    print(f"PLAXIS script via CLI failed with return code: {self.plaxis_process.returncode}")
+                    error_output = stderr if stderr else stdout # Prefer stderr for errors if available
+                    print(f"PLAXIS CLI Error Output:\n{error_output}")
+                    self.map_plaxis_error(error_output) # Try to map from CLI output
+                    return False
+            except FileNotFoundError:
+                print(f"Error: PLAXIS executable not found at '{self.plaxis_path}'. Check installation path.")
+                return False
+            except subprocess.TimeoutExpired:
+                print(f"Error: PLAXIS script execution timed out after {timeout_duration} seconds.")
+                if self.plaxis_process:
+                    self.plaxis_process.kill() # Ensure process is killed if it timed out
+                    self.plaxis_process.wait() # Wait for kill to complete
+                self.map_plaxis_error(f"TimeoutExpired: Process exceeded {timeout_duration}s.")
+                return False
+            except Exception as e: # Catch other potential errors during subprocess management
+                print(f"An unexpected error occurred during PLAXIS CLI execution: {e}")
+                self.map_plaxis_error(str(e))
+                return False
+            # print("STUB: _execute_cli_script - subprocess execution part is conceptual and commented out. Returning True for stub.")
+            # return True # Placeholder for successful stub execution
         except IOError as e: # Error writing the script file
             print(f"IOError writing/reading script file '{abs_script_path}': {e}")
             return False
         finally:
             # Clean up the temporary script file
-            # if os.path.exists(abs_script_path):
-            #     try:
-            #         os.remove(abs_script_path)
-            #         print(f"Removed temporary script file: {abs_script_path}")
-            #     except OSError as e:
-            #         print(f"Warning: Could not remove temporary script file '{abs_script_path}': {e}")
-            pass
+            if os.path.exists(abs_script_path):
+                try:
+                    os.remove(abs_script_path)
+                    print(f"Removed temporary script file: {abs_script_path}")
+                except OSError as e:
+                    print(f"Warning: Could not remove temporary script file '{abs_script_path}': {e}")
+            # pass # Original pass statement removed as cleanup is now active
 
     def _execute_api_commands(self, commands: List[Callable[[Any], None]], server_global_object: Any, server_name: str) -> bool:
         """
@@ -737,6 +783,13 @@ class PlaxisInteractor:
             return ("ErrorCode25 (Stiffness Matrix Problem): PLAXIS encountered an issue with the stiffness matrix "
                     "(possibly non-positive definite). Check material parameters (especially stiffness and Poisson's ratio), "
                     "element quality, and boundary conditions.")
+        if "accuracy condition not met" in lower_error:
+            return ("AccuracyNotMet: The calculation could not satisfy the desired accuracy. "
+                    "This may be due to numerical difficulties, model instability, or very large deformations. "
+                    "Review model setup, load increments, and solver settings.")
+        if "load increment reduced to zero" in lower_error:
+            return ("LoadIncrementReducedToZero: The solver reduced the load increment to zero, indicating a failure to proceed. "
+                    "This often points to model instability or a failure mechanism. Check loads, strengths, and boundary conditions.")
 
 
         # Meshing Issues
@@ -746,6 +799,10 @@ class PlaxisInteractor:
         if "cannot generate mesh for region" in lower_error: # More specific meshing error
             return ("MeshingRegionError: Mesh could not be generated for a specific region or volume. "
                     "Inspect the geometry of that particular region for errors or try local mesh refinement/coarsening.")
+        if "geometric inconsistency" in lower_error or "invalid geometry" in lower_error:
+            return ("GeometricError: A geometric inconsistency or invalid geometry was detected. "
+                    "Run geometry checks in PLAXIS, look for overlaps, gaps, or very small features.")
+
 
         # Input Parameter, Type, and Index Issues
         if "parameter" in lower_error and ("missing" in lower_error or "invalid" in lower_error or "out of range" in lower_error):

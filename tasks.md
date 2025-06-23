@@ -30,7 +30,7 @@ This document outlines the detailed development tasks required to create the PLA
 *   **2.1. Define Core Data Structures/Models**
     *   **Description:** Implement Python classes or data structures to represent project settings, spudcan geometry, soil layers, soil material properties, loading conditions, and analysis results. These models will be used internally by the backend and for communication with the frontend.
     *   **PRD Ref:** Functional Requirements (4.1.2, 4.1.6), Technology Stack (7.4 for project file saving).
-    *   **Status:** Done (`models.py` created with dataclasses).
+    *   **Status:** Enhanced (`models.py` updated for `MaterialProperties` and `AnalysisControlParameters`).
 *   **2.2. Implement Project Save/Load Functionality**
     *   **Description:** Develop functions to serialize the project data models (from task 2.1) to a file (JSON or XML as per PRD 7.4.1) and deserialize them back into the application.
     *   **PRD Ref:** Functional Requirements (4.1.1.2, 4.1.1.3).
@@ -47,42 +47,42 @@ This document outlines the detailed development tasks required to create the PLA
 ## 3. Backend Development: PLAXIS Interaction Layer
 
 *   **3.1. Design PLAXIS Command/Script Generation Strategy**
-    *   **Description:** Decide on the primary interaction method (PLAXIS Python API vs. CLI scripts - PRD 7.3). Design how parameters from the backend data models will be translated into PLAXIS commands or Python script calls.
+    *   **Description:** Primary interaction method is PLAXIS Python API. CLI scripts are a fallback. Parameters from backend data models are translated into PLAXIS API callables.
     *   **PRD Ref:** Functional Requirements (4.2.1), Technology Stack (7.3).
-    *   **Status:** Done (Conceptual design decided: API first, CLI fallback).
+    *   **Status:** Done (Strategy confirmed and reflected in `PlaxisInteractor`).
 *   **3.2. Implement Spudcan Geometry Command Generation**
-    *   **Description:** Implemented direct API call (g_i.cone) for simple cone geometry creation and renaming. **Support for more complex spudcan geometries may be needed.**
+    *   **Description:** Implemented direct API call (`g_i.cone`) for simple cone geometry creation and renaming in `geometry_builder.py`. Complex spudcan geometries (e.g., with cylindrical parts) would require further development if specified.
     *   **PRD Ref:** Functional Requirements (4.2.1.3, relating to 4.1.2.1).
-    *   **Status:** Initial Implementation Done.
+    *   **Status:** Implemented (Simple Cone).
 *   **3.3. Implement Soil Stratigraphy & Properties Command Generation**
-    *   **Description:** Implemented API-based generation for soil materials (including structure for advanced model parameters like Hardening Soil) and single borehole stratigraphy. **Full parameter sets for all soil models and complex stratigraphy require further detailing.**
+    *   **Description:** `soil_builder.py` implements API-based generation for soil materials (`g_i.soilmat`, `g_i.setproperties`) and single borehole stratigraphy (`g_i.borehole`, `g_i.soillayer`, `g_i.setsoillayerlevel`). `MaterialProperties` model in `models.py` expanded to include more standard parameters and an `other_params` dict for flexibility. `soil_builder.py` updated to use these. **Further detailing for all soil models' comprehensive parameter sets and complex multi-borehole stratigraphy is still a larger task.**
     *   **PRD Ref:** Functional Requirements (4.2.1.2, 4.2.1.3, relating to 4.1.2.2).
-    *   **Status:** Implemented.
+    *   **Status:** Enhanced (Material parameter handling improved).
 *   **3.4. Implement Loading Conditions Command Generation**
-    *   **Description:** Implemented API-based generation for point loads (g_i.pointload) and point displacements (g_i.pointdispl). **Activation in phases and more complex load types need further attention in phase setup.**
+    *   **Description:** `calculation_builder.py` implements API-based generation for point loads (`g_i.pointload`) and point displacements (`g_i.pointdispl`). Load application point made configurable in function signature. Activation in phases is handled in phase setup (Task 3.5). Complex load types (e.g., surface loads on spudcan) not yet implemented.
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.3).
-    *   **Status:** Initial Implementation Done.
+    *   **Status:** Enhanced (Load application point configurable).
 *   **3.5. Implement Analysis Control Command Generation**
-    *   **Description:** Implemented API-based meshing setup (including Coarseness factor via g_i.mesh) and a standard phase sequence (Initial, Preload, Penetration) with improved phase object linking and activation of elements. **Needs robust object finding for activation and comprehensive parameter exposure for phases.**
+    *   **Description:** `calculation_builder.py` implements API-based meshing setup (`g_i.gotomesh`, `g_i.mesh`) and a standard phase sequence (Initial, Preload, Penetration) using `g_i.phase`. Activation of geometry and loads uses hardcoded names (checked for consistency). `AnalysisControlParameters` model in `models.py` and phase setup logic in `calculation_builder.py` expanded to include more deformation control parameters (e.g., MaxSteps, ToleratedError, MaxIterations). **Robust object finding by passing references instead of relying on names is a potential future enhancement.**
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.4).
-    *   **Status:** Implemented.
+    *   **Status:** Enhanced (More phase parameters exposed).
 *   **3.6. Implement Output Request Command Generation**
-    *   **Description:** Implemented conceptual callable for selecting curve points in Input. **Effectiveness and primary output selection occur in results parsing via `g_o`.**
+    *   **Description:** The primary command for selecting curve points, `addcurvepoint`, is an Output (`g_o`) command based on documentation. Conceptual callable for `g_i` removed from `calculation_builder.py`. Selection of curve points will be handled during results parsing (Task 3.8).
     *   **PRD Ref:** Functional Requirements (4.2.1.5).
-    *   **Status:** Initial Attempt Made.
+    *   **Status:** Clarified (Handled in Output/Task 3.8).
 *   **3.7. Develop PLAXIS Process Execution & Monitoring Module**
-    *   **Description:** API call orchestration logic is implemented. CLI process execution and comprehensive monitoring are conceptual/stubs.
+    *   **Description:** API call orchestration via callables is implemented in `PlaxisInteractor`. CLI process execution in `_execute_cli_script` method in `PlaxisInteractor.py` has been made functional using `subprocess.Popen`, including basic stdout/stderr capture, timeout, and process management. Comprehensive real-time monitoring for API/CLI is not yet implemented.
     *   **PRD Ref:** Functional Requirements (4.2.2).
-    *   **Status:** Partially Implemented.
+    *   **Status:** Enhanced (Basic CLI execution implemented).
     *   **Dependencies:** Logging module (Section 9).
 *   **3.8. Implement PLAXIS Output Parsing Logic**
-    *   **Description:** Implemented parsing logic for load-penetration curves, final penetration, peak resistance, soil displacements, and basic structural forces using `g_o` methods. **Requires testing with actual PLAXIS output and refinement for different result types/objects.**
+    *   **Description:** `results_parser.py` implements parsing for load-penetration curves, final penetration, peak resistance, soil displacements, and basic structural forces using `g_o` methods. Function signature for `parse_load_penetration_curve` clarified regarding result types for predefined vs. step-by-step curves. **Requires extensive testing with actual PLAXIS output and further refinement for different result types/objects and error handling within parsing functions.**
     *   **PRD Ref:** Functional Requirements (4.2.3).
-    *   **Status:** Implemented.
+    *   **Status:** Implemented (Minor clarification in function signature).
 *   **3.9. Define PLAXIS Error Detection and Mapping**
-    *   **Description:** Implemented `map_plaxis_error` with common error patterns. **Requires ongoing refinement and addition of more specific error codes/messages as encountered.**
+    *   **Description:** `PlaxisInteractor.map_plaxis_error` implemented with common error patterns. Added a few more general error patterns (accuracy not met, load increment zero, geometric inconsistency). **Requires ongoing refinement and addition of more specific error codes/messages as encountered through testing.**
     *   **PRD Ref:** Functional Requirements (4.2.4.1), Error Handling (8.1.1.4).
-    *   **Status:** Initial Implementation Done.
+    *   **Status:** Enhanced (More error patterns added).
 
 ## 4. Frontend Development: UI Shell & Framework
 

@@ -15,33 +15,50 @@ except ImportError:
 
 
 def parse_load_penetration_curve(g_o: Any,
+                                 target_phase_name: Optional[str] = None, # If None, try last phase
+                                 # For predefined curves:
+                                 predefined_curve_name: Optional[str] = None,
+                                 # ResultTypes for X and Y axes of the predefined PLAXIS curve
+                                 # These might be different from components used for step-by-step construction.
+                                 # e.g. g_o.ResultTypes.SumMstage for displacement, g_o.ResultTypes.SumFstage_Z for force
+                                 curve_x_axis_result_type: Optional[Any] = None,
+                                 curve_y_axis_result_type: Optional[Any] = None,
+                                 # For step-by-step construction if predefined_curve_name is not used/found:
                                  spudcan_ref_node_coords: Optional[Tuple[float, float, float]] = None,
                                  spudcan_ref_object_name: Optional[str] = None,
-                                 target_phase_name: Optional[str] = None, # If None, try last phase
-                                 # Parameters for curve definition if not using predefined PLAXIS curve:
-                                 disp_component_result_type: Optional[Any] = None, # e.g., g_o.ResultTypes.RigidBody.Uy
-                                 load_component_result_type: Optional[Any] = None, # e.g., g_o.ResultTypes.RigidBody.Fz
-                                 predefined_curve_name: Optional[str] = None
+                                 # ResultTypes for individual displacement and load components of the spudcan object/node
+                                 step_disp_component_result_type: Optional[Any] = None, # e.g., g_o.ResultTypes.RigidBody.Uy
+                                 step_load_component_result_type: Optional[Any] = None  # e.g., g_o.ResultTypes.RigidBody.Fz
                                  ) -> List[Dict[str, float]]:
     """
     Parses the load-penetration curve from PLAXIS output.
-    This function tries to use a predefined PLAXIS curve if `predefined_curve_name` is given.
-    Otherwise, it attempts to construct the curve by fetching step-by-step results for
-    the specified displacement and load components related to the spudcan object/node
-    within the target phase.
+
+    Priority:
+    1. If `predefined_curve_name` and its axis ResultTypes (`curve_x_axis_result_type`, `curve_y_axis_result_type`)
+       are provided, attempts to use `g_o.getcurveresults`.
+    2. If that fails or is not applicable, and if `spudcan_ref_object_name` and its component ResultTypes
+       (`step_disp_component_result_type`, `step_load_component_result_type`) are provided,
+       attempts to construct the curve step-by-step using `g_o.getresults`.
+    3. If that also fails or is not applicable, and if `spudcan_ref_node_coords` and its component ResultTypes
+       are provided, this part is currently a STUB and would need implementation for step-by-step node results.
 
     Args:
         g_o: The PLAXIS output global object.
-        spudcan_ref_node_coords: Coordinates (x,y,z) of a reference node on the spudcan.
-                                 Used if `spudcan_ref_object_name` is not primary.
-        spudcan_ref_object_name: Name of a reference object (e.g., a plate or rigid body) representing the spudcan.
-        target_phase_name: The name of the calculation phase to extract results from. If None, uses the last phase.
-        disp_component_result_type: The PLAXIS ResultType for spudcan displacement (e.g., g_o.ResultTypes.RigidBody.Uy).
-        load_component_result_type: The PLAXIS ResultType for spudcan load/reaction (e.g., g_o.ResultTypes.RigidBody.Fz).
-        predefined_curve_name: Name of a curve object predefined in PLAXIS (via addcurvepoint).
+        target_phase_name: The name of the calculation phase. If None, uses the last phase.
+
+        predefined_curve_name: Name of a curve object predefined in PLAXIS (e.g., via `addcurvepoint` in Output).
+        curve_x_axis_result_type: PLAXIS ResultType for the X-axis of the `predefined_curve_name`.
+                                  This is CRITICAL for `getcurveresults` to function correctly.
+        curve_y_axis_result_type: PLAXIS ResultType for the Y-axis of the `predefined_curve_name`.
+                                  This is CRITICAL for `getcurveresults` to function correctly.
+
+        spudcan_ref_node_coords: Coordinates (x,y,z) of a reference node on the spudcan for step-by-step.
+        spudcan_ref_object_name: Name of a reference object (e.g., RigidBody, Plate) for step-by-step results.
+        step_disp_component_result_type: PLAXIS ResultType for the spudcan's displacement component for step-by-step.
+        step_load_component_result_type: PLAXIS ResultType for the spudcan's load/reaction component for step-by-step.
 
     Returns:
-        A list of dictionaries, e.g., [{'penetration': p1, 'load': l1}, ...]
+        A list of dictionaries, e.g., [{'penetration': p1, 'load': l1}, ...].
         Returns empty list if data cannot be parsed.
     """
     curve_data: List[Dict[str, float]] = []
@@ -53,70 +70,69 @@ def parse_load_penetration_curve(g_o: Any,
         target_phase = None
         if not target_phase_name and hasattr(g_o, 'Phases') and g_o.Phases:
             target_phase = g_o.Phases[-1] # Default to last phase
-            print(f"Target phase not specified, using last phase: {target_phase.Identification if target_phase else 'N/A'}")
+            phase_id_val = getattr(getattr(target_phase, "Identification", None), "value", "N/A")
+            print(f"Target phase not specified, using last phase: {phase_id_val}")
         elif target_phase_name and hasattr(g_o, 'Phases'):
             for phase in g_o.Phases:
-                if phase.Name == target_phase_name or phase.Identification == target_phase_name:
+                phase_id_val = getattr(getattr(phase, "Identification", None), "value", None)
+                phase_name_val = getattr(getattr(phase, "Name", None), "value", None)
+                if phase_name_val == target_phase_name or phase_id_val == target_phase_name:
                     target_phase = phase
                     break
 
         if not target_phase:
             print(f"Error: Target phase '{target_phase_name or 'Last Phase'}' not found or no phases available.")
             return curve_data
-        print(f"Parsing load-penetration curve for phase: {target_phase.Identification}")
+
+        phase_id_val_found = getattr(getattr(target_phase, "Identification", None), "value", "UnknownPhase")
+        print(f"Parsing load-penetration curve for phase: {phase_id_val_found}")
 
         # Option 1: Use a predefined curve in PLAXIS
-        if predefined_curve_name:
+        if predefined_curve_name and curve_x_axis_result_type and curve_y_axis_result_type:
             if hasattr(g_o, 'Curves') and predefined_curve_name in g_o.Curves:
                 plaxis_curve_object = g_o.Curves[predefined_curve_name]
-                # The result types for X and Y axis of the curve must be known or inferred.
-                # Common setup: X-axis is displacement (e.g., of a point, or MStage), Y-axis is force.
-                # Example: ResultTypes.SumMstage for displacement, ResultTypes.SumFstage_Z for force
-                # These need to match how the curve was defined in PLAXIS.
-                # For spudcan, X might be Uy of a point, Y might be Fz of a load or reaction.
-                # This part requires knowledge of the curve definition.
-                # Let's assume curve X-axis is penetration, Y-axis is load for simplicity.
-                # Actual ResultTypes would be passed or configured.
-                # x_results, y_results = g_o.getcurveresults(plaxis_curve_object, target_phase,
-                #                                          g_o.ResultTypes.YOUR_CURVE_X_AXIS_TYPE,
-                #                                          g_o.ResultTypes.YOUR_CURVE_Y_AXIS_TYPE)
-                # For now, this part is highly conceptual as axis types are unknown.
-                print(f"STUB: Predefined curve '{predefined_curve_name}' found. Extraction needs specific X/Y ResultTypes for getcurveresults.")
-                # curve_data.append({'penetration': 0.0, 'load': 0.0}) # Dummy if extracted
-                # curve_data.append({'penetration': 0.5, 'load': 1000.0})
-                # return curve_data # If successfully extracted from predefined curve
+                print(f"Attempting to extract predefined curve '{predefined_curve_name}' using getcurveresults.")
+                try:
+                    x_results, y_results = g_o.getcurveresults(plaxis_curve_object, target_phase,
+                                                             curve_x_axis_result_type,
+                                                             curve_y_axis_result_type)
+                    if isinstance(x_results, (list, tuple)) and isinstance(y_results, (list, tuple)) and len(x_results) == len(y_results):
+                        for x_val, y_val in zip(x_results, y_results):
+                            pen = abs(float(x_val)) if isinstance(x_val, (int, float, str)) else 0.0
+                            load = abs(float(y_val)) if isinstance(y_val, (int, float, str)) else 0.0
+                            curve_data.append({'penetration': pen, 'load': load})
+                        print(f"Extracted {len(curve_data)} points from predefined curve '{predefined_curve_name}'.")
+                    else:
+                        print(f"Warning: Mismatch in lengths or types from getcurveresults for '{predefined_curve_name}'. X type: {type(x_results)}, Y type: {type(y_results)}")
+                except PlxScriptingError as pse_curve:
+                    print(f"PlxScriptingError getting predefined curve results for '{predefined_curve_name}': {pse_curve}")
+                except Exception as e_curve: # Catch any other error during getcurveresults
+                    print(f"Error getting predefined curve results for '{predefined_curve_name}': {e_curve}")
             else:
-                print(f"Warning: Predefined curve '{predefined_curve_name}' not found. Will attempt step-by-step if other params provided.")
+                print(f"Warning: Predefined curve '{predefined_curve_name}' not found in g_o.Curves or axis ResultTypes not provided. Will attempt step-by-step if other params provided.")
 
-        # Option 2: Construct curve from step-by-step results (if predefined curve not used or failed)
-        if not curve_data and spudcan_ref_object_name and disp_component_result_type and load_component_result_type:
+        # Option 2: Construct curve from step-by-step results for an object (if predefined curve not used or failed)
+        if not curve_data and spudcan_ref_object_name and step_disp_component_result_type and step_load_component_result_type:
             ref_object = None
             # Find the reference object (e.g. RigidBody, Plate) by name
-            # This needs to be robust, checking available object collections in g_o
-            # Example for RigidBody:
             if hasattr(g_o, 'RigidBodies') and spudcan_ref_object_name in g_o.RigidBodies:
                 ref_object = g_o.RigidBodies[spudcan_ref_object_name]
-            # Add checks for Plates, PointLoads (if load is directly from it), etc.
-            # elif hasattr(g_o, 'Plates') and spudcan_ref_object_name in g_o.Plates:
-            #    ref_object = g_o.Plates[spudcan_ref_object_name] # Note: Plate results are often nodal
+            elif hasattr(g_o, 'Plates') and spudcan_ref_object_name in g_o.Plates: # Example for another type
+                 ref_object = g_o.Plates[spudcan_ref_object_name]
+            # Add more checks for other relevant object types if necessary
 
             if not ref_object:
                 print(f"Error: Spudcan reference object '{spudcan_ref_object_name}' not found for step-by-step curve construction.")
                 return curve_data
 
-            # Get number of steps in the phase. This API might vary.
-            # num_steps = target_phase.NumberOfSteps.value (hypothetical, check PLAXIS docs)
-            # Or, getresults might return arrays containing all steps.
-
-            # Try to get arrays of results for all steps for the object and phase
+            print(f"Attempting step-by-step curve construction for object '{spudcan_ref_object_name}'.")
             try:
-                displacements_all_steps = g_o.getresults(ref_object, target_phase, disp_component_result_type, 'step')
-                loads_all_steps = g_o.getresults(ref_object, target_phase, load_component_result_type, 'step')
+                displacements_all_steps = g_o.getresults(ref_object, target_phase, step_disp_component_result_type, 'step')
+                loads_all_steps = g_o.getresults(ref_object, target_phase, step_load_component_result_type, 'step')
 
                 if isinstance(displacements_all_steps, (list, tuple)) and isinstance(loads_all_steps, (list, tuple)) and \
                    len(displacements_all_steps) == len(loads_all_steps):
                     for disp_val, load_val in zip(displacements_all_steps, loads_all_steps):
-                        # Ensure values are numeric; PLAXIS API might return objects or strings sometimes
                         pen = abs(float(disp_val)) if isinstance(disp_val, (int, float, str)) else 0.0
                         load = abs(float(load_val)) if isinstance(load_val, (int, float, str)) else 0.0
                         curve_data.append({'penetration': pen, 'load': load})
@@ -124,25 +140,33 @@ def parse_load_penetration_curve(g_o: Any,
                 else:
                     print(f"Warning: Mismatch in lengths or types of step results for '{spudcan_ref_object_name}'. "
                           f"Disp type: {type(displacements_all_steps)}, Load type: {type(loads_all_steps)}")
-            except PlxScriptingError as pse:
-                print(f"PlxScriptingError getting step results for '{spudcan_ref_object_name}': {pse}")
+            except PlxScriptingError as pse_steps:
+                print(f"PlxScriptingError getting step results for '{spudcan_ref_object_name}': {pse_steps}")
             except Exception as e_steps:
                 print(f"Error getting step results for '{spudcan_ref_object_name}': {e_steps}")
 
-        elif not curve_data and spudcan_ref_node_coords and disp_component_result_type and load_component_result_type:
+        # Option 3: Construct curve from step-by-step results for a node (STUB)
+        elif not curve_data and spudcan_ref_node_coords and step_disp_component_result_type and step_load_component_result_type:
              print(f"STUB: Step-by-step curve construction for node coordinates {spudcan_ref_node_coords} is not yet fully implemented.")
-             # This would involve g_o.getsingleresult for each component for each step, if steps are iterable.
+             # This would involve iterating through steps (if possible via API) and calling getsingleresult for each.
+             # Example:
+             # num_steps = target_phase.NumberOfSteps.value # This needs to be a valid API call
+             # for step_index in range(num_steps):
+             #     current_step_obj = target_phase.Steps[step_index] # This needs to be valid
+             #     disp_val = g_o.getsingleresult(current_step_obj, step_disp_component_result_type, spudcan_ref_node_coords)
+             #     load_val = g_o.getsingleresult(current_step_obj, step_load_component_result_type, spudcan_ref_node_coords)
+             #     # ... append to curve_data ...
+
 
         if not curve_data: # Fallback if no data yet
             print("Warning: Load-penetration curve data remains empty after all attempts.")
             # Provide a dummy curve for testing if in a dev/test mode
             # curve_data.extend([{'penetration': 0.01*i, 'load': 100.0*i + 50* (i%2)} for i in range(1, 6)])
 
-
     except PlxScriptingError as pse:
         print(f"PLAXIS API PlxScriptingError during load-penetration curve parsing: {pse}")
-    except AttributeError as ae:
-        print(f"PLAXIS API attribute error (e.g., missing Phases, Curves, ResultTypes): {ae}.")
+    except AttributeError as ae: # Catches errors like g_o.Phases not existing or phase.Identification.value on None
+        print(f"PLAXIS API attribute error (e.g., missing Phases, Curves, ResultTypes, or sub-attributes like .value): {ae}.")
     except Exception as e:
         print(f"An unexpected error occurred during load-penetration curve parsing: {e}")
 
@@ -174,17 +198,23 @@ def parse_final_penetration_depth(g_o: Any,
         target_phase = None
         if not result_phase_name and hasattr(g_o, 'Phases') and g_o.Phases:
             target_phase = g_o.Phases[-1]
-            print(f"Result phase not specified, using last phase: {target_phase.Identification if target_phase else 'N/A'}")
+            phase_id_val = getattr(getattr(target_phase, "Identification", None), "value", "N/A")
+            print(f"Result phase not specified, using last phase: {phase_id_val}")
         elif result_phase_name and hasattr(g_o, 'Phases'):
             for phase in g_o.Phases:
-                if phase.Name == result_phase_name or phase.Identification == result_phase_name:
+                phase_id_val = getattr(getattr(phase, "Identification", None), "value", None)
+                phase_name_val = getattr(getattr(phase, "Name", None), "value", None)
+                if phase_name_val == result_phase_name or phase_id_val == result_phase_name:
                     target_phase = phase
                     break
 
         if not target_phase:
             print(f"Error: Target phase '{result_phase_name or 'Last Phase'}' not found for final penetration.")
             return None
-        print(f"Parsing final penetration depth for phase: {target_phase.Identification}")
+
+        phase_id_val_found = getattr(getattr(target_phase, "Identification", None), "value", "UnknownPhase")
+        print(f"Parsing final penetration depth for phase: {phase_id_val_found}")
+
 
         penetration_value: Optional[float] = None
 
@@ -284,16 +314,23 @@ def parse_soil_displacements(g_o: Any,
         target_phase = None
         if not result_phase_name and hasattr(g_o, 'Phases') and g_o.Phases:
             target_phase = g_o.Phases[-1]
+            phase_id_val = getattr(getattr(target_phase, "Identification", None), "value", "N/A")
+            print(f"Target phase for soil displacements not specified, using last phase: {phase_id_val}")
         elif result_phase_name and hasattr(g_o, 'Phases'):
             for phase in g_o.Phases:
-                if phase.Name == result_phase_name or phase.Identification == result_phase_name:
+                phase_id_val = getattr(getattr(phase, "Identification", None), "value", None)
+                phase_name_val = getattr(getattr(phase, "Name", None), "value", None)
+                if phase_name_val == result_phase_name or phase_id_val == result_phase_name:
                     target_phase = phase
                     break
 
         if not target_phase:
             print(f"Error: Target phase '{result_phase_name or 'Last Phase'}' not found for soil displacements.")
             return displacements_data
-        print(f"Parsing soil displacements for phase '{target_phase.Identification}' at {len(points_of_interest)} points...")
+
+        phase_id_val_found = getattr(getattr(target_phase, "Identification", None), "value", "UnknownPhase")
+        print(f"Parsing soil displacements for phase '{phase_id_val_found}' at {len(points_of_interest)} points...")
+
 
         for point_coords in points_of_interest:
             point_results: Dict[str, Optional[float]] = {'Ux': None, 'Uy': None, 'Uz': None, 'Utot': None}
@@ -341,15 +378,22 @@ def parse_structural_forces(g_o: Any,
         target_phase = None
         if not result_phase_name and hasattr(g_o, 'Phases') and g_o.Phases:
             target_phase = g_o.Phases[-1]
+            phase_id_val = getattr(getattr(target_phase, "Identification", None), "value", "N/A")
+            print(f"Target phase for structural forces not specified, using last phase: {phase_id_val}")
         elif result_phase_name and hasattr(g_o, 'Phases'):
             for phase in g_o.Phases:
-                if phase.Name == result_phase_name or phase.Identification == result_phase_name:
+                phase_id_val = getattr(getattr(phase, "Identification", None), "value", None)
+                phase_name_val = getattr(getattr(phase, "Name", None), "value", None)
+                if phase_name_val == result_phase_name or phase_id_val == result_phase_name:
                     target_phase = phase
                     break
         if not target_phase:
             print(f"Error: Target phase '{result_phase_name or 'Last Phase'}' not found for structural forces.")
             return None
-        print(f"Parsing forces for {structure_type} '{structure_name}' in phase '{target_phase.Identification}'...")
+
+        phase_id_val_found = getattr(getattr(target_phase, "Identification", None), "value", "UnknownPhase")
+        print(f"Parsing forces for {structure_type} '{structure_name}' in phase '{phase_id_val_found}'...")
+
 
         structural_element = None
         # Map structure_type to PLAXIS object collection and ResultTypes path
@@ -374,9 +418,9 @@ def parse_structural_forces(g_o: Any,
 
         # Define default results if not specified by caller
         if desired_results is None:
-            if structure_type == "Plate": desired_results = ["M2D", "Q2D", "N1", "N2"]
+            if structure_type == "Plate": desired_results = ["M2D", "Q2D", "N1", "N2"] # Example from all.md: M11, M22, N11, N22, Q12, Q13, Q23
             elif structure_type == "RigidBody": desired_results = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
-            elif structure_type == "Beam": desired_results = ["M", "Q", "N"] # Example
+            elif structure_type == "Beam": desired_results = ["N", "Q12", "Q13", "M1", "M2", "M3"] # Example from all.md: N, Q12, Q13, M1, M2, M3
             else: desired_results = []
 
         parsed_forces: Dict[str, Any] = {}

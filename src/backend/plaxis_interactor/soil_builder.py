@@ -42,100 +42,105 @@ def generate_material_callables(material_model: MaterialProperties) -> List[Call
     """
     callables: List[Callable[[Any], None]] = []
 
-    # Sanitize material name for PLAXIS: replace spaces, ensure valid characters.
+    # Use Identification if provided, otherwise sanitize model_name or use a default.
     # PLAXIS often requires names to be unique and without special characters.
-    # Using Identification from MaterialProperties if available, otherwise model_name.
-    base_name = getattr(material_model, 'Identification', material_model.model_name or 'DefaultMaterial')
-    # Replace non-alphanumeric characters with underscores.
-    sanitized_mat_name = "".join(c if c.isalnum() else '_' for c in base_name)
-    # Ensure it's not empty and doesn't start with a number if that's a PLAXIS rule.
-    if not sanitized_mat_name or (sanitized_mat_name[0].isdigit() and len(sanitized_mat_name) > 0) : # Check length for isdigit
-        sanitized_mat_name = "Mat_" + sanitized_mat_name # Prepend "Mat_" if problematic
-    if not sanitized_mat_name: # Final fallback if it became empty
-        sanitized_mat_name = "UnnamedMaterial"
+    if material_model.Identification:
+        sanitized_mat_name = material_model.Identification
+    else:
+        base_name = material_model.model_name or 'DefaultMaterial'
+        # Replace non-alphanumeric characters with underscores.
+        sanitized_mat_name = "".join(c if c.isalnum() else '_' for c in base_name)
+        # Ensure it's not empty and doesn't start with a number if that's a PLAXIS rule.
+        if not sanitized_mat_name or (sanitized_mat_name[0].isdigit() and len(sanitized_mat_name) > 0) : # Check length for isdigit
+            sanitized_mat_name = "Mat_" + sanitized_mat_name # Prepend "Mat_" if problematic
+        if not sanitized_mat_name: # Final fallback if it became empty
+            sanitized_mat_name = "UnnamedMaterialFromSoilBuilder"
 
-
-    print(f"Preparing material callables for '{sanitized_mat_name}' (Model: {material_model.model_name})")
+    print(f"Preparing material callables for '{sanitized_mat_name}' (PLAXIS Model: {material_model.model_name})")
 
     def create_and_set_material_props_callable(g_i: Any) -> None:
         """Callable to create a new soil material and set its properties."""
         print(f"  PLAXIS API CALL: Creating material '{sanitized_mat_name}'")
 
-        # Create a new soil material object using the PLAXIS API.
-        # The actual method might be g_i.soilmat(), g_i.creatematerial('soil'), etc.
-        # Assuming g_i.soilmat() returns the newly created material object.
         try:
-            mat_obj = g_i.soilmat()
+            mat_obj = g_i.soilmat() # Creates a new material object
         except Exception as e:
             print(f"    ERROR: Failed to create material object using g_i.soilmat(): {e}")
-            raise # Re-raise to be caught by PlaxisInteractor
+            raise
 
         print(f"    Material object created. Setting properties for '{sanitized_mat_name}'...")
 
-        # Prepare properties dictionary for setproperties or individual assignments
-        props_to_set = {
-            "Identification": sanitized_mat_name,
-            "SoilModel": material_model.model_name or "MohrCoulomb" # Default to MohrCoulomb
-        }
+        # Prepare properties dictionary for setproperties
+        # These names MUST match the PLAXIS API attribute names for the SoilMat object.
+        # Refer to docs/all.md (SoilMat object properties - GUID-0F3E39F4-3357-4E68-870D-D62F216D8F48.html)
+        props_to_set: Dict[str, Any] = {}
 
-        # Map common parameters from MaterialProperties model to PLAXIS API names.
-        # These PLAXIS names are based on common usage and `all.md` (e.g., SoilMat object properties).
-        # Parameter names like 'gammaSat', 'cRef' should be verified against specific PLAXIS version API docs.
-        if material_model.unit_weight is not None:
+        # Identification and Model Type
+        props_to_set["Identification"] = sanitized_mat_name
+        if material_model.model_name:
+            # Map common model names to PLAXIS internal names if necessary, or assume direct match
+            # Example: "Hardening Soil" -> "HardeningSoil" (often PLAXIS removes spaces)
+            # For now, assume direct match after removing spaces as a simple heuristic.
+            # A more robust solution would be an explicit mapping.
+            plaxis_model_name = material_model.model_name.replace(" ", "")
+            props_to_set["SoilModel"] = plaxis_model_name
+        else:
+            props_to_set["SoilModel"] = "MohrCoulomb" # Default if not specified
+
+        # General Parameters
+        if material_model.gammaUnsat is not None: props_to_set["gammaUnsat"] = material_model.gammaUnsat
+        if material_model.gammaSat is not None: props_to_set["gammaSat"] = material_model.gammaSat
+        # If only unit_weight was provided in old model, distribute it (heuristic)
+        elif hasattr(material_model, 'unit_weight') and material_model.unit_weight is not None:
             props_to_set["gammaSat"] = material_model.unit_weight
-            # Heuristic for unsaturated unit weight. Ideally, this should be a separate input.
-            props_to_set["gammaUnsat"] = material_model.unit_weight - 1.0 if material_model.unit_weight > 1.0 else 16.0
+            props_to_set["gammaUnsat"] = material_model.unit_weight - 1.0 # Simple heuristic
 
-        if material_model.cohesion is not None: props_to_set["cRef"] = material_model.cohesion
-        if material_model.friction_angle is not None: props_to_set["phi"] = material_model.friction_angle
-        if material_model.youngs_modulus is not None: props_to_set["Eref"] = material_model.youngs_modulus # Eref common for MC, HS
-        if material_model.poissons_ratio is not None: props_to_set["nu"] = material_model.poissons_ratio
+        if material_model.eInit is not None: props_to_set["eInit"] = material_model.eInit
+        # Note: PLAXIS might automatically calculate nInit from eInit or vice-versa.
 
-        # Handle specific parameters for advanced soil models
-        # Example for Hardening Soil (parameter names like E50ref, Eoedref, Eurref, m are typical)
-        # These should be present in material_model (e.g. in an 'other_params' dict or as direct attributes)
-        # The exact PLAXIS API parameter names must be used.
-        if material_model.model_name == "HardeningSoil": # Assuming "HardeningSoil" is the PLAXIS internal name
-            hs_params_map = {
-                # Model_Param_Name: Plaxis_API_Param_Name
-                "E50ref": "E50ref",
-                "Eoedref": "Eoedref",
-                "Eurref": "Eurref",
-                "m": "m", # Power m
-                "Pref": "Pref",
-                # Add other relevant Hardening Soil parameters here
-                # e.g. "KoNC", "phi", "cRef", "psi" (some might overlap with common params already set)
-            }
-            # Assuming advanced parameters are stored in material_model.other_params as a dictionary
-            other_params = getattr(material_model, 'other_params', {})
-            for model_param, plaxis_param in hs_params_map.items():
-                if model_param in other_params and other_params[model_param] is not None:
-                    props_to_set[plaxis_param] = other_params[model_param]
-            print(f"    Added specific parameters for HardeningSoil model: { {k:v for k,v in props_to_set.items() if k in hs_params_map.values()} }")
-        # Add similar blocks for other advanced models (SoftSoil, SoftSoilCreep, etc.) based on documentation
-        # else if material_model.model_name == "SoftSoil":
-            # ... params for SoftSoil ...
+        # Common Elastic Parameters (names are Eref, nu as per SoilMat doc)
+        if material_model.Eref is not None: props_to_set["ERef"] = material_model.Eref # Note case: ERef in docs
+        elif hasattr(material_model, 'youngs_modulus') and material_model.youngs_modulus is not None:
+             props_to_set["ERef"] = material_model.youngs_modulus # Backward compatibility
 
-        # Set properties on the material object.
-        # PLAXIS API might use mat_obj.setproperties(**props_to_set) or individual assignments.
-        # Using g_i.setproperties(mat_obj, **props_to_set) is also a common pattern.
+        if material_model.nu is not None: props_to_set["nu"] = material_model.nu
+        elif hasattr(material_model, 'poissons_ratio') and material_model.poissons_ratio is not None:
+             props_to_set["nu"] = material_model.poissons_ratio # Backward compatibility
+
+        # Common Strength Parameters (Mohr-Coulomb: cRef, phi, psi)
+        if material_model.cRef is not None: props_to_set["cRef"] = material_model.cRef
+        elif hasattr(material_model, 'cohesion') and material_model.cohesion is not None:
+            props_to_set["cRef"] = material_model.cohesion # Backward compatibility
+
+        if material_model.phi is not None: props_to_set["phi"] = material_model.phi
+        elif hasattr(material_model, 'friction_angle') and material_model.friction_angle is not None:
+            props_to_set["phi"] = material_model.friction_angle # Backward compatibility
+
+        if material_model.psi is not None: props_to_set["psi"] = material_model.psi
+
+
+        # Add all parameters from other_params
+        # These should use the exact PLAXIS API attribute names as keys in the dict.
+        # Example: other_params = {"E50ref": 30000, "Eoedref": 30000, "Eurref": 90000, "m": 0.5, "K0NC": 0.5, "Rf": 0.9}
+        if material_model.other_params:
+            for key, value in material_model.other_params.items():
+                if value is not None: # Ensure not to send None values if key exists but value is None
+                    props_to_set[key] = value
+            print(f"    Including {len(material_model.other_params)} parameters from other_params.")
+
+        # Flatten dict for g_i.setproperties(mat_obj, param_name1, param_value1, ...) style
+        params_flat = []
+        for key, value in props_to_set.items():
+            params_flat.append(key)
+            params_flat.append(value)
+
         try:
-            # Assuming g_i.setproperties(target_object, param_name1, param_value1, param_name2, param_value2, ...)
-            # Flatten dict for this style:
-            params_flat = []
-            for key, value in props_to_set.items():
-                params_flat.append(key)
-                params_flat.append(value)
-
             g_i.setproperties(mat_obj, *params_flat)
-            # Alternative if setproperties takes a dict: g_i.setproperties(mat_obj, props_to_set)
-            # Alternative if direct assignment:
-            # for key, value in props_to_set.items(): setattr(mat_obj, key, value)
-
-            print(f"    Properties set for material '{sanitized_mat_name}'.")
+            print(f"    Properties set for material '{sanitized_mat_name}'. Applied: {props_to_set}")
         except Exception as e:
             print(f"    ERROR: Failed to set properties for material '{sanitized_mat_name}': {e}")
-            raise # Re-raise
+            print(f"    Attempted to set: {props_to_set}")
+            raise
 
     callables.append(create_and_set_material_props_callable)
     return callables

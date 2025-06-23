@@ -28,17 +28,39 @@ class MaterialProperties:
     Parameters will vary based on the selected soil model.
     PRD Ref: 4.1.2.2
     """
-    model_name: Optional[SoilMaterialName] = None
-    unit_weight: Optional[float] = None
-    # Common parameters (can be expanded or made more specific)
-    cohesion: Optional[float] = None
-    friction_angle: Optional[float] = None
-    youngs_modulus: Optional[float] = None
-    poissons_ratio: Optional[float] = None
-    # For more complex models, parameters might be stored in a dictionary
-    # e.g. other_params: Dict[str, Any] = field(default_factory=dict)
-    # Specific parameters for Hardening Soil, etc., would go here or in other_params
-    # For now, keeping it simple, will be expanded based on actual PLAXIS needs.
+    model_name: Optional[SoilMaterialName] = None # e.g., "MohrCoulomb", "HardeningSoil"
+    Identification: Optional[str] = None # User-defined material name
+
+    # General parameters (from SoilMat in all.md)
+    gammaUnsat: Optional[float] = None # Unsaturated unit weight
+    gammaSat: Optional[float] = None # Saturated unit weight
+    eInit: Optional[float] = None # Initial void ratio (can also use nInit - initial porosity)
+
+    # Common Elastic Properties (can be Eref, nu for MC, or Eoed for SS)
+    Eref: Optional[float] = None # Reference Young's modulus (often E' for effective stress)
+    nu: Optional[float] = None   # Poisson's ratio (often nu')
+
+    # Common Strength Properties (Mohr-Coulomb)
+    cRef: Optional[float] = None # Effective Cohesion
+    phi: Optional[float] = None  # Effective Friction angle
+    psi: Optional[float] = None  # Dilatancy angle
+
+    # Drainage Type (though this is often a model-level setting in UI, not per material dataset property in API usually)
+    # DrainageType: Optional[str] = None # "Drained" or "Undrained (A/B/C)" - this might be better handled at phase level
+
+    # Parameters for Hardening Soil (example, more can be added to other_params)
+    # E50ref: Optional[float] = None # Secant stiffness in standard drained triaxial test
+    # Eoedref: Optional[float] = None # Tangent stiffness for primary oedometer loading
+    # Eurref: Optional[float] = None  # Unloading/reloading stiffness
+    # m: Optional[float] = None        # Power for stress-level dependency of stiffness
+    # pRef: Optional[float] = None     # Reference stress for stiffnesses
+    # K0NC: Optional[float] = None     # K0 for normal consolidation (advanced tab)
+    # Rf: Optional[float] = None       # Failure ratio Rf = qf/qa (advanced tab)
+    # G0ref: Optional[float] = None    # Initial shear modulus at very small strains (HSsmall)
+    # gamma07: Optional[float] = None  # Shear strain at which Gs = 0.7 G0 (HSsmall)
+
+    # For additional or model-specific parameters not listed as direct attributes
+    other_params: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class SoilLayer:
@@ -69,12 +91,26 @@ class AnalysisControlParameters:
     Represents parameters controlling the PLAXIS analysis execution.
     PRD Ref: 4.1.2.4
     """
-    meshing_global_coarseness: Optional[str] = "Medium" # Example default
-    # meshing_refinement_spudcan: Optional[str] = "Medium"
-    initial_stress_method: Optional[str] = "K0Procedure" # Example default
-    # calculation_phases_config: Optional[Any] = None # Define structure later
-    # tolerated_error: Optional[float] = None # Use PLAXIS default initially
-    # max_iterations: Optional[int] = None # Use PLAXIS default initially
+    meshing_global_coarseness: Optional[str] = "Medium" # e.g., "VeryCoarse", "Coarse", "Medium", "Fine", "VeryFine"
+    meshing_refinement_spudcan: Optional[bool] = False # True to apply local refinement to spudcan
+
+    initial_stress_method: Optional[str] = "K0Procedure" # e.g., "K0Procedure", "GravityLoading", "FieldStress"
+
+    # Iteration/Deformation control parameters for calculation phases (subset from PLAXIS Phase.Deform object)
+    # These would typically apply to the main analysis phase (e.g., PenetrationPhase)
+    # Using PLAXIS default if None
+    MaxSteps: Optional[int] = None # Max number of calculation steps (often on Phase.Deform.MaxSteps)
+    MaxStepsStored: Optional[int] = None # Max number of steps to store results for (often on Phase.MaxStepsStored directly)
+    ToleratedError: Optional[float] = None # Tolerated error for iterative procedure (Phase.Deform.ToleratedError)
+    MinIterations: Optional[int] = None # Desired minimum iterations (Phase.Deform.MinIterations)
+    MaxIterations: Optional[int] = None # Desired maximum iterations (Phase.Deform.MaxIterations)
+    OverRelaxationFactor: Optional[float] = None # Over-relaxation factor (Phase.Deform.OverRelaxation)
+    UseArcLengthControl: Optional[bool] = None # (Phase.Deform.ArcLengthControl - might be True/False or enum)
+    UseLineSearch: Optional[bool] = None # (Phase.Deform.UseLineSearch)
+    ResetDispToZero: Optional[bool] = False # For specific phases, e.g. g_i.set(phase.ResetDisplacementsToZero, True)
+
+    # Time interval for consolidation/dynamic phases (Phase.TimeInterval or Phase.Deform.TimeIntervalSeconds)
+    TimeInterval: Optional[float] = None
 
 @dataclass
 class ProjectSettings:

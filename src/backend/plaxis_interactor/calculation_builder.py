@@ -15,7 +15,10 @@ from typing import List, Callable, Any, Optional
 
 # --- Loading Conditions ---
 
-def generate_loading_condition_callables(loading_model: LoadingConditions) -> List[Callable[[Any], None]]:
+def generate_loading_condition_callables(
+    loading_model: LoadingConditions,
+    spudcan_ref_point: Tuple[float, float, float] = (0,0,0) # Default to origin if not provided
+) -> List[Callable[[Any], None]]:
     """
     Generates PLAXIS API callables for defining loading conditions.
     Loads are typically defined as objects first (e.g., PointLoad, PrescribedDisplacement)
@@ -23,16 +26,15 @@ def generate_loading_condition_callables(loading_model: LoadingConditions) -> Li
 
     Args:
         loading_model: The LoadingConditions data model instance.
+        spudcan_ref_point: A tuple (x,y,z) representing the point on the spudcan
+                           where loads/displacements should be applied. Defaults to (0,0,0).
 
     Returns:
         A list of callable functions for PLAXIS API interaction.
 
     Assumptions:
-    - Load objects (like PointLoad, PrescribedDisplacement) are created at specific points or on geometry.
-      This builder assumes a reference point (e.g., (0,0,0) for simplicity) or a named entity
-      (e.g., "SpudcanRefPoint") would be used in a real scenario, passed from `ProjectSettings`.
     - Vertical loads/displacements are along the Z-axis. Downwards is negative Z.
-    - PLAXIS API provides methods like `g_i.pointload(...)` and `g_i.pointdisplacement(...)`.
+    - PLAXIS API provides methods like `g_i.pointload(...)` and `g_i.pointdispl(...)`.
     - Names for load objects (e.g., "SpudcanPreload", "SpudcanPenetrationDispl") are assigned for
       later reference during phase activation.
     - Load steps or displacement increments, if specified in `loading_model`, are primarily
@@ -41,13 +43,10 @@ def generate_loading_condition_callables(loading_model: LoadingConditions) -> Li
     """
     callables: List[Callable[[Any], None]] = []
     print(f"Preparing loading condition callables: Preload={loading_model.vertical_preload}, "
-          f"Target={loading_model.target_penetration_or_load} ({loading_model.target_type})")
+          f"Target={loading_model.target_penetration_or_load} ({loading_model.target_type}) "
+          f"at reference point {spudcan_ref_point}")
 
-    # Define a reference point for applying loads/displacements.
-    # In a real model, this would be a specific node on the spudcan or a reference geometry point.
-    # For this builder, using (0,0,0) as a placeholder. This should be configurable.
-    load_application_point = (0,0,0)
-    # TODO: Make load_application_point configurable, possibly derived from spudcan geometry or a named point.
+    load_application_point = spudcan_ref_point
 
     # Callable for Vertical Pre-load
     if loading_model.vertical_preload is not None and loading_model.vertical_preload != 0:
@@ -346,19 +345,57 @@ def generate_analysis_control_callables(
                     else:
                         print(f"    Warning: Load object for target type 'load' (e.g., '{main_load_name}') not found for activation.")
 
-            # Set iteration control parameters (MaxStepsStored, ToleratedError)
-            # Path example: current_phase_obj.Deform.MaxStepsStored
-            # These attributes might be directly on the phase object or nested.
-            # `all.md` suggests Phase.Deform.MaxStepsStored and Phase.Deform.ToleratedError
-            if hasattr(current_phase_obj, 'Deform'):
-                if hasattr(control_model, 'max_iterations') and control_model.max_iterations is not None:
-                    g_i.set(current_phase_obj.Deform.MaxStepsStored, control_model.max_iterations)
-                    print(f"    Set Deform.MaxStepsStored to {control_model.max_iterations}.")
-                if hasattr(control_model, 'tolerated_error') and control_model.tolerated_error is not None:
-                    g_i.set(current_phase_obj.Deform.ToleratedError, control_model.tolerated_error)
-                    print(f"    Set Deform.ToleratedError to {control_model.tolerated_error}.")
+            # Set iteration control parameters from control_model
+            # These attributes might be directly on the phase object or nested under phase.Deform.
+            # Referencing docs/all.md (GUID-2E473E68-930B-47E0-8DD2-05A775E5E5F1.html - Phase object)
+            # and docs/all.md (GUID-7EF3F05E-AD66-482E-9FCD-369DB79C87B5.html - Deform object)
+
+            # MaxStepsStored is often directly on the phase object
+            if control_model.MaxStepsStored is not None:
+                g_i.set(current_phase_obj.MaxStepsStored, control_model.MaxStepsStored)
+                print(f"    Set MaxStepsStored to {control_model.MaxStepsStored}.")
+
+            if hasattr(current_phase_obj, 'Deform'): # Check if Deform sub-object exists
+                deform_obj = current_phase_obj.Deform
+                if control_model.MaxSteps is not None: # Max calculation steps
+                    g_i.set(deform_obj.MaxSteps, control_model.MaxSteps)
+                    print(f"    Set Deform.MaxSteps to {control_model.MaxSteps}.")
+                if control_model.ToleratedError is not None:
+                    g_i.set(deform_obj.ToleratedError, control_model.ToleratedError)
+                    print(f"    Set Deform.ToleratedError to {control_model.ToleratedError}.")
+                if control_model.MinIterations is not None:
+                    g_i.set(deform_obj.MinIterations, control_model.MinIterations)
+                    print(f"    Set Deform.MinIterations to {control_model.MinIterations}.")
+                if control_model.MaxIterations is not None:
+                    g_i.set(deform_obj.MaxIterations, control_model.MaxIterations)
+                    print(f"    Set Deform.MaxIterations to {control_model.MaxIterations}.")
+                if control_model.OverRelaxationFactor is not None:
+                    g_i.set(deform_obj.OverRelaxation, control_model.OverRelaxationFactor) # Docs show OverRelaxation
+                    print(f"    Set Deform.OverRelaxation to {control_model.OverRelaxationFactor}.")
+                if control_model.UseArcLengthControl is not None:
+                    # PLAXIS API might expect integer/enum for ArcLengthControl (e.g. 0=Off, 1=On, -1=Auto)
+                    # Or a string "On", "Off", "Auto". Assuming boolean maps to On/Off.
+                    # A direct boolean set might work if plxscripting handles it.
+                    # For robustness, map to known PLAXIS values if boolean isn't direct.
+                    # Example: arc_control_value = "On" if control_model.UseArcLengthControl else "Off"
+                    # g_i.set(deform_obj.ArcLengthControl, arc_control_value)
+                    g_i.set(deform_obj.ArcLengthControl, control_model.UseArcLengthControl) # Try direct bool
+                    print(f"    Set Deform.ArcLengthControl to {control_model.UseArcLengthControl}.")
+                if control_model.UseLineSearch is not None:
+                    g_i.set(deform_obj.UseLineSearch, control_model.UseLineSearch)
+                    print(f"    Set Deform.UseLineSearch to {control_model.UseLineSearch}.")
             else:
-                print(f"    Warning: Could not access Deform attribute on phase '{penetration_phase_name}' to set iteration parameters.")
+                print(f"    Warning: Could not access Deform attribute on phase '{penetration_phase_name}' to set detailed iteration parameters.")
+
+            if control_model.ResetDispToZero is not None and control_model.ResetDispToZero:
+                 g_i.set(current_phase_obj.ResetDisplacementsToZero, True)
+                 print(f"    Set ResetDisplacementsToZero to True for '{penetration_phase_name}'.")
+
+            if control_model.TimeInterval is not None and current_phase_obj.DeformCalcType.value in ["Consolidation", "Dynamics", "Fully coupled flow-deformation", "Dynamics with consolidation"]:
+                # TimeInterval is usually on the phase itself for consolidation/dynamic type calcs
+                g_i.set(current_phase_obj.TimeInterval, control_model.TimeInterval)
+                print(f"    Set TimeInterval to {control_model.TimeInterval} for '{penetration_phase_name}'.")
+
 
             print(f"    '{penetration_phase_name}' configured.")
         except Exception as e:
@@ -369,66 +406,26 @@ def generate_analysis_control_callables(
     return callables
 
 # --- Output Request Configuration ---
+# Based on documentation (all.md GUID-0171B46E-90D4-4C5F-869D-F8E22B2AE570.html),
+# `addcurvepoint` is an Output command (operates on g_o).
+# Therefore, pre-selecting curve points in the Input phase via g_i is likely not standard
+# or might not be effective for all PLAXIS versions/workflows.
+# The selection of points for curves is typically done in the Output environment
+# when results are being extracted (e.g., before calling getcurveresults).
+# Task 3.6 "Implement Output Request Command Generation" for Input is thus potentially misleading.
+# The "primary output selection" is indeed done in results_parser.py via g_o.
+# For now, this function will be removed from calculation_builder.py.
+# If pre-calculation "output requests" (beyond standard logging/step storage) are needed via g_i,
+# they would be very specific PLAXIS settings not covered by `addcurvepoint`.
 
-def generate_output_request_callables() -> List[Callable[[Any], None]]:
-    """
-    Generates PLAXIS API callables for requesting specific outputs,
-    primarily focusing on pre-selecting points for curves if applicable in Input.
-
-    Returns:
-        A list of callable functions for PLAXIS API interaction.
-
-    Assumptions:
-    - `g_i.addcurvepoint("Node", coordinates)` or similar API is available in the Input environment
-      to pre-select nodes for curve generation later in Output. PLAXIS behavior for `addcurvepoint`
-      in Input vs. Output needs verification. `all.md` lists it under Output commands.
-    - If `addcurvepoint` is purely an Output command, these callables might be conceptual placeholders
-      or would need to be executed on `g_o` after calculation.
-    - For this implementation, we assume it can be called on `g_i` to mark points.
-    - A reference point (e.g., (0,0,0) representing spudcan tip or reference) is used for curve selection.
-      This should ideally be a named point or coordinates derived from spudcan geometry.
-    """
-    callables: List[Callable[[Any], None]] = []
-    print("Preparing output request callables (e.g., for curve point selection).")
-
-    # Define a reference point for curve data, e.g., spudcan tip or center.
-    # TODO: Make this configurable or derive from spudcan geometry.
-    spudcan_curve_ref_point_coords = (0,0,0)
-    # Name for the curve point in PLAXIS for later identification.
-    curve_point_name = "SpudcanRefPoint_ForCurve"
-
-    def select_curve_points_callable(g_i: Any) -> None:
-        print(f"  PLAXIS API CALL: Selecting node at/near {spudcan_curve_ref_point_coords} for curve generation.")
-        try:
-            # The `addcurvepoint` command (from all.md, Output section) syntax:
-            # `addcurvepoint <S_type> [plx_obj] <(x y z)> [(dirx diry dirz)]` where S_type is "Node" or "Stresspoint".
-            # If this command is available and effective on `g_i` (Input server):
-            # cp = g_i.addcurvepoint("Node", spudcan_curve_ref_point_coords) # Returns curve point object
-            # g_i.rename(cp, curve_point_name) # Rename for easier access later
-
-            # Using g_i.command as a placeholder if direct API is uncertain or for illustration:
-            g_i.command(f'addcurvepoint "Node" ({spudcan_curve_ref_point_coords[0]} {spudcan_curve_ref_point_coords[1]} {spudcan_curve_ref_point_coords[2]})')
-            # Renaming the last created curve point (assuming CurvePoints[-1] is valid syntax for g_i.command context)
-            # This is highly dependent on PLAXIS supporting such access.
-            # g_i.command(f'set CurvePoints[-1].Name "{curve_point_name}"') # Conceptual
-
-            print(f"    Requested curve point selection at {spudcan_curve_ref_point_coords} (named conceptually '{curve_point_name}'). "
-                  "Actual availability/naming of this point for `getcurveresults` depends on PLAXIS API specifics.")
-        except Exception as e:
-            print(f"    ERROR during curve point selection: {e}")
-            # This might not be a fatal error for the overall process if curve generation is optional.
-            # For now, let it pass and log.
-            pass # Or raise if pre-selection is critical
-
-    callables.append(select_curve_points_callable)
-
-    # Note: Most detailed result extraction (final penetration, peak resistance, full curve data)
-    # is typically performed using the PLAXIS Output environment (g_o) after the calculation is complete.
-    # This function primarily handles pre-calculation setup if PLAXIS allows/requires it.
-
-    if not callables:
-        print("No specific output request callables generated (beyond default PLAXIS outputs).")
-    return callables
+# def generate_output_request_callables() -> List[Callable[[Any], None]]:
+#     """
+#     Generates PLAXIS API callables for requesting specific outputs,
+#     primarily focusing on pre-selecting points for curves if applicable in Input.
+#     (...)
+#     """
+#     # ... (implementation removed as addcurvepoint is likely g_o command) ...
+#     return []
 
 
 # --- Example Usage (for testing this module directly) ---
