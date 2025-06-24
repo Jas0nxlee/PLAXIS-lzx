@@ -35,9 +35,10 @@ ensure_newline_before_comments = true
 skip_glob = ["*/setup.py"] # Example: skip setup.py if it has specific import order needs
 
 # You can add other tool configurations here, e.g., for pytest, mypy, etc.
-# [tool.pytest.ini_options]
-# minversion = "6.0"
-# addopts = "-ra -q"
-# testpaths = [
-#     "tests",
-# ]
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --import-mode=importlib" # Added importlib mode
+testpaths = [
+    "tests",
+]
+# python_paths = ["src"] # Removed as conftest.py will handle path modification

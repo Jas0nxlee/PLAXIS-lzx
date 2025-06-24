@@ -6,10 +6,10 @@ PRD Ref: 4.1.7 (Configuration & Settings Section)
 import logging
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
-    QFileDialog, QDialogButtonBox, QLabel, QGroupBox, QComboBox
+    QFileDialog, QDialogButtonBox, QLabel, QGroupBox, QComboBox, QWidget # Added QWidget
 )
 from PySide6.QtCore import Qt, QSettings, Slot, QStandardPaths
-from typing import Optional # Added for type hinting
+from typing import Optional
 import os # Added for os.name in browse_plaxis_path
 
 logger = logging.getLogger(__name__)

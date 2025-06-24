@@ -109,6 +109,14 @@ class TestProjectIO(unittest.TestCase):
         # load_project is designed to return None if file not found, not raise FileNotFoundError.
         self.assertIsNone(load_project("non_existent_file.json"))
 
+    def test_load_project_malformed_json(self):
+        """Test loading a file with malformed JSON content returns None."""
+        with open(self.temp_file_path, "w") as f:
+            f.write("{'project_name': 'MalformedJSON', ...") # Intentionally malformed JSON
+
+        loaded_settings = load_project(self.temp_file_path)
+        self.assertIsNone(loaded_settings, "load_project should return None for malformed JSON.")
+
     def test_save_project_settings_creates_file(self):
         """Test that save_project_settings creates a file."""
         # Use a new temp file path that doesn't exist yet for this test
@@ -132,6 +140,97 @@ class TestProjectIO(unittest.TestCase):
         # Clean up this specific file
         if os.path.exists(temp_file_path_new):
             os.remove(temp_file_path_new)
+
+    def test_comprehensive_round_trip(self):
+        """Test saving and loading a ProjectSettings object with more fields populated."""
+        mat1 = MaterialProperties(
+            model_name="HardeningSoil",
+            Identification="HS_Sand_Dense",
+            gammaUnsat=18.0, gammaSat=20.0, eInit=0.5,
+            E50ref=60000, Eoedref=70000, Eurref=180000, m=0.5,
+            cRef=1.0, phi=38.0, psi=8.0, pRef=100.0, K0NC=0.35, Rf=0.9,
+            other_params={"G0ref": 250000, "gamma07": 0.00012}
+        )
+        mat2 = MaterialProperties(
+            model_name="MohrCoulomb",
+            Identification="MC_Clay_Soft",
+            gammaUnsat=16.0, gammaSat=17.5, eInit=1.2,
+            Eref=5000, nu=0.33, cRef=12.0, phi=2.0, psi=0.0
+        )
+        layer1 = SoilLayer(name="DenseSand", thickness=10.0, material=mat1)
+        layer2 = SoilLayer(name="SoftClay", thickness=15.0, material=mat2)
+
+        settings_to_save = ProjectSettings(
+            project_name="ComprehensiveTest",
+            job_number="COMP-001",
+            analyst_name="Dr. Roundtrip",
+            spudcan=SpudcanGeometry(diameter=7.5, height_cone_angle=40.0),
+            soil_stratigraphy=[layer1, layer2],
+            water_table_depth=-3.0,
+            loading=LoadingConditions(
+                vertical_preload=1500.0,
+                target_type="penetration",
+                target_penetration_or_load=5.0
+            ),
+            analysis_control=AnalysisControlParameters(
+                meshing_global_coarseness="Fine",
+                meshing_refinement_spudcan=True,
+                initial_stress_method="GravityLoading",
+                MaxIterations=200,
+                ToleratedError=0.005,
+                ResetDispToZero=True,
+                MaxStepsStored=500,
+                MaxSteps=2000, # Mapped from MaxSteps in model
+                MinIterations=5
+            ),
+            plaxis_installation_path="C:/PLAXIS/Path",
+            units_system="SI"
+        )
+
+        self.assertTrue(save_project(settings_to_save, self.temp_file_path))
+        loaded_settings = load_project(self.temp_file_path)
+
+        self.assertIsNotNone(loaded_settings)
+        if not loaded_settings: self.fail("Loaded settings should not be None")
+
+        # Compare all fields, including nested ones
+        self.assertEqual(settings_to_save.project_name, loaded_settings.project_name)
+        self.assertEqual(settings_to_save.job_number, loaded_settings.job_number)
+        self.assertEqual(settings_to_save.analyst_name, loaded_settings.analyst_name)
+        self.assertEqual(settings_to_save.plaxis_installation_path, loaded_settings.plaxis_installation_path)
+        self.assertEqual(settings_to_save.units_system, loaded_settings.units_system)
+
+        # Spudcan
+        self.assertEqual(settings_to_save.spudcan.diameter, loaded_settings.spudcan.diameter)
+        self.assertEqual(settings_to_save.spudcan.height_cone_angle, loaded_settings.spudcan.height_cone_angle)
+
+        # Loading
+        self.assertEqual(settings_to_save.loading.vertical_preload, loaded_settings.loading.vertical_preload)
+        self.assertEqual(settings_to_save.loading.target_type, loaded_settings.loading.target_type)
+        self.assertEqual(settings_to_save.loading.target_penetration_or_load, loaded_settings.loading.target_penetration_or_load)
+
+        # Analysis Control
+        self.assertEqual(settings_to_save.analysis_control.meshing_global_coarseness, loaded_settings.analysis_control.meshing_global_coarseness)
+        self.assertEqual(settings_to_save.analysis_control.MaxIterations, loaded_settings.analysis_control.MaxIterations)
+        self.assertEqual(settings_to_save.analysis_control.ToleratedError, loaded_settings.analysis_control.ToleratedError)
+
+        # Soil Stratigraphy (more detailed check)
+        self.assertEqual(len(loaded_settings.soil_stratigraphy), 2)
+        self.assertEqual(settings_to_save.water_table_depth, loaded_settings.water_table_depth)
+
+        # Compare first layer and material
+        saved_layer1_mat = settings_to_save.soil_stratigraphy[0].material
+        loaded_layer1_mat = loaded_settings.soil_stratigraphy[0].material
+        self.assertEqual(saved_layer1_mat.Identification, loaded_layer1_mat.Identification)
+        self.assertEqual(saved_layer1_mat.E50ref, loaded_layer1_mat.E50ref)
+        self.assertEqual(saved_layer1_mat.other_params.get("G0ref"), loaded_layer1_mat.other_params.get("G0ref"))
+
+        # Compare second layer and material
+        saved_layer2_mat = settings_to_save.soil_stratigraphy[1].material
+        loaded_layer2_mat = loaded_settings.soil_stratigraphy[1].material
+        self.assertEqual(saved_layer2_mat.Identification, loaded_layer2_mat.Identification)
+        self.assertEqual(saved_layer2_mat.cRef, loaded_layer2_mat.cRef)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,7 +9,7 @@ future expansion to support multiple unit systems and conversions.
 """
 
 from enum import Enum
-from typing import Union, Dict
+from typing import Union, Dict, Optional # Added Optional
 
 class UnitSystem(Enum):
     """

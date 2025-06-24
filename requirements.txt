@@ -10,3 +10,8 @@ openpyxl
 # Add other core dependencies as they are identified, e.g.:
 # numpy (if heavy numerical work is done outside PLAXIS)
 matplotlib # For generating plots (PRD 7.4.2)
+
+# Testing
+pytest
+pytest-qt # For frontend Qt testing (if used)
+pytest-mock # For mocking (though unittest.mock is built-in)
