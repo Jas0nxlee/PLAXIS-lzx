@@ -3,11 +3,11 @@ Handles saving and loading of project data for the PLAXIS 3D Spudcan Automation 
 PRD Ref: 4.1.1.2, 4.1.1.3 (Project Save/Load)
 Serialization format: JSON is planned (PRD 7.4.1)
 """
-
+from typing import Optional, Type, TypeVar # Moved Optional here and kept others
 from .models import ProjectSettings # Assuming models.py is in the same package
 import json
 from dataclasses import asdict, is_dataclass
-from typing import Type, TypeVar
+
 
 T = TypeVar('T')
 
