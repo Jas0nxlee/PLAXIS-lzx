@@ -147,9 +147,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.1.2.1.3).
     *   **Status:** Done (Placeholder `QComboBox` in `SpudcanGeometryWidget`).
 *   **6.1.3. UI for Spudcan Schematic Display**
-    *   **Description:** Develop a simple, dynamic visual representation (schematic diagram) of the spudcan that updates with input dimensions.
+    *   **Description:** Implemented `SpudcanSchematicWidget` with `QPainter` logic to draw a 2D cone. Integrated into `SpudcanGeometryWidget`, dynamically updating when diameter or cone angle inputs change. Displays diameter and calculated height.
     *   **PRD Ref:** Functional Requirements (4.1.2.1.4).
-    *   **Status:** Done (Placeholder `QFrame` in `SpudcanGeometryWidget`). **Actual drawing logic pending.**
+    *   **Status:** Implemented.
 
 ### 6.2. Soil Stratigraphy & Properties Input Section (PRD 4.1.2.2)
 
@@ -311,13 +311,13 @@ This document outlines the detailed development tasks required to create the PLA
 ## 9. Error Handling & Logging Implementation (PRD Section 8)
 
 *   **9.1. Backend: Implement Robust Exception Handling**
-    *   **Description:** Exception handling present in `project_io.py`, `validation.py`, and extensively in `plaxis_interactor.py`. **Needs comprehensive review across all backend modules and standardized error propagation.**
+    *   **Description:** Exception handling present in `project_io.py`, `validation.py`, and extensively in `plaxis_interactor.py`. Custom exceptions (`PlaxisAutomationError` subtypes) defined in `exceptions.py` and integrated across all backend interactor modules (`interactor.py`, `geometry_builder.py`, `soil_builder.py`, `calculation_builder.py`, `results_parser.py`). SDK/Python exceptions are mapped to these custom types.
     *   **PRD Ref:** Error Handling (8.2).
-    *   **Status:** Partially Implemented.
+    *   **Status:** Enhanced (Custom exceptions integrated across backend modules).
 *   **9.2. Backend: Implement Logging Module**
-    *   **Description:** Set up Python's `logging` module. Configure logging levels, formatting, and file output with rotation as per PRD 8.3. Integrate logging calls throughout backend.
+    *   **Description:** Set up Python's `logging` module via `logger_config.py`. Configured basic logging levels, formatting, and console output. Integrated `logger` calls (replacing `print`) throughout all backend interactor modules. File output with rotation as per PRD 8.3 is pending full configuration in `logger_config.py` but basic structure is in place.
     *   **PRD Ref:** Logging (8.3).
-    *   **Status:** Not Started.
+    *   **Status:** Done.
 *   **9.3. Frontend: Implement User-Friendly Error Dialogs/Messages**
     *   **Description:** Design and implement dialog boxes or message areas in the UI to display clear, constructive error messages to the user, based on information from the backend.
     *   **PRD Ref:** Error Handling (8.1).

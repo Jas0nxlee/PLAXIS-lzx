@@ -5,1117 +5,536 @@ process execution, and results parsing.
 PRD Ref: Tasks 3.7 (PLAXIS Process Execution & Monitoring), 3.9 (Error Mapping)
 """
 import os
-import re # For error mapping
+import re
+import logging
 from typing import List, Dict, Any, Optional, Callable, Tuple
-import subprocess # For CLI interaction (conceptual)
-import time # For potential delays
+import subprocess
+import time
 
-# Try to import plxscripting, but allow failure for environments without it (e.g., during early dev or CI)
+# Custom exceptions
+from ..exceptions import (
+    PlaxisAutomationError, PlaxisConnectionError, PlaxisConfigurationError,
+    PlaxisCalculationError, PlaxisOutputError, PlaxisCliError
+)
+
+logger = logging.getLogger(__name__)
+
+# Try to import plxscripting, but allow failure for environments without it
 try:
     from plxscripting.easy import new_server
     from plxscripting.plx_scripting_exceptions import PlxScriptingError
 except ImportError:
-    print("WARNING: plxscripting library not found. PlaxisInteractor will not be able to connect to PLAXIS API.")
-    # Define a placeholder for PlxScriptingError if the import fails,
-    # so the rest of the class can be defined without NameErrors, allowing type checking and linting.
+    logger.warning("plxscripting library not found. PlaxisInteractor will not be able to connect to PLAXIS API.")
     class PlxScriptingError(Exception): # type: ignore
         """Placeholder for PlxScriptingError if plxscripting library is not available."""
         pass
     def new_server(host: str, port: int, password: str) -> Tuple[Any, Any]: # type: ignore
         """Placeholder for new_server if plxscripting library is not available."""
-        raise PlxScriptingError("plxscripting library not available, cannot create new_server.")
+        # Ensure this placeholder actually raises an error that can be caught
+        raise PlaxisConnectionError("plxscripting library not available, cannot create new_server.")
 
 
-from ..models import ProjectSettings, AnalysisResults # Use .. for relative import from parent package
-# Ensure these can be imported, or define placeholders if they are not yet created for isolated testing.
+from ..models import ProjectSettings, AnalysisResults
 from . import geometry_builder
 from . import soil_builder
 from . import calculation_builder
 from . import results_parser
 
+
+def _map_plaxis_sdk_exception_to_custom(e: Exception, context: str = "PLAXIS operation") -> PlaxisAutomationError:
+    """Maps a Python or PlxScripting exception to a custom PlaxisAutomationError."""
+    logger.debug(f"Mapping SDK error: {type(e).__name__} - {e} in context: {context}", exc_info=True) # Add exc_info for original trace
+
+    if isinstance(e, PlaxisAutomationError): # If it's already one of our custom errors
+        return e
+
+    err_str = str(e).lower() # For case-insensitive matching
+
+    if isinstance(e, PlxScriptingError):
+        # Connection issues
+        if "connection refused" in err_str or "actively refused it" in err_str or \
+           "server not responding" in err_str or "no response from server" in err_str or \
+           "cannot connect" in err_str:
+            return PlaxisConnectionError(f"PLAXIS API connection issue during {context}: {e}")
+        if "password incorrect" in err_str or "authentication failed" in err_str:
+            return PlaxisConnectionError(f"PLAXIS API authentication failed (password incorrect?) during {context}: {e}")
+
+        # Configuration or model setup issues often manifest as these
+        if "object not found" in err_str or "unknown identifier" in err_str or \
+           "does not exist" in err_str or "property not found" in err_str or \
+           "unknown command" in err_str or "command is not recognized" in err_str or \
+           "incorrect mode" in err_str or "operation not allowed in current mode" in err_str or \
+           "type mismatch" in err_str or "incorrect type" in err_str or \
+           "index out of range" in err_str or ("is not valid" in err_str and "index" in err_str):
+            return PlaxisConfigurationError(f"PLAXIS model/API configuration error during {context}: {e}")
+
+        # Calculation specific issues
+        if "calculation failed" in err_str or "convergence not reached" in err_str or \
+           "did not converge" in err_str or "numerical error" in err_str or \
+           "singular matrix" in err_str or "matrix is not positive definite" in err_str or \
+           "soil body seems to collapse" in err_str or "mechanism formed" in err_str or \
+           "error code 101" in err_str or "error code 25" in err_str or \
+           "accuracy condition not met" in err_str or "load increment reduced to zero" in err_str:
+            return PlaxisCalculationError(f"PLAXIS calculation error during {context}: {e}")
+
+        # Meshing issues
+        if "mesh generation failed" in err_str or "error generating mesh" in err_str or \
+           "cannot generate mesh for region" in err_str:
+            return PlaxisConfigurationError(f"PLAXIS meshing error during {context}: {e}") # Often config related
+
+        # Geometry issues
+        if "geometric inconsistency" in err_str or "invalid geometry" in err_str:
+            return PlaxisConfigurationError(f"PLAXIS geometry error during {context}: {e}")
+
+        # Parameter issues
+        if "parameter" in err_str and ("missing" in err_str or "invalid" in err_str or "out of range" in err_str):
+            param_name_match = re.search(r"parameter\s*['\"]?([^'\"\s]+)['\"]?", err_str)
+            param_info = f" for parameter '{param_name_match.group(1)}'" if param_name_match else ""
+            return PlaxisConfigurationError(f"Invalid PLAXIS parameter{param_info} during {context}: {e}")
+
+        # License issues
+        if "license" in err_str or "dongle" in err_str or "no valid license" in err_str:
+            return PlaxisConnectionError(f"PLAXIS license issue during {context}: {e}") # Connection because it prevents use
+
+        # File issues (often from save/load)
+        if "file not found" in err_str and ".p3dscript" not in err_str : # Exclude script file not found
+             return PlaxisConfigurationError(f"PLAXIS project/data file not found during {context}: {e}")
+        if "cannot open file" in err_str or ("access denied" in err_str and "file" in err_str):
+            return PlaxisConfigurationError(f"PLAXIS file access error during {context}: {e}")
+        if "disk space" in err_str:
+            return PlaxisAutomationError(f"Insufficient disk space for PLAXIS operations during {context}: {e}")
+
+        # Default for other PlxScriptingErrors
+        return PlaxisAutomationError(f"A PLAXIS scripting error occurred during {context}: {e}")
+
+    # Mapping for standard Python exceptions that might occur during interaction
+    elif isinstance(e, AttributeError): # Often means API misuse or unexpected object state
+        return PlaxisConfigurationError(f"AttributeError (API misuse or unexpected PLAXIS object state) during {context}: {e}")
+    elif isinstance(e, TypeError): # API called with wrong type
+        return PlaxisConfigurationError(f"TypeError (API called with incorrect type) during {context}: {e}")
+    elif isinstance(e, ValueError): # API called with invalid value
+        return PlaxisConfigurationError(f"ValueError (API called with invalid value) during {context}: {e}")
+    elif isinstance(e, FileNotFoundError) and ".p3dscript" not in err_str: # If a project file not found, not script
+        return PlaxisConfigurationError(f"FileNotFoundError for a project/data file during {context}: {e}")
+    elif isinstance(e, TimeoutError) or ("timeout" in err_str or "timed out" in err_str): # From subprocess or other timeouts
+        return PlaxisCalculationError(f"Operation timed out during {context}: {e}") # Often calculation related
+
+    # General fallback for truly unexpected Python errors not covered above
+    return PlaxisAutomationError(f"An unexpected Python error ({type(e).__name__}) occurred during {context}: {e}")
+
+
 class PlaxisInteractor:
-    """
-    Handles the overall process of interacting with PLAXIS, including
-    model setup, calculation execution, and results extraction.
-
-    The primary mode of interaction is via the PLAXIS Python API (HTTP/RPC server).
-    A conceptual framework for CLI interaction is included but is secondary and less developed,
-    especially for executing complex sequences of Python API callables.
-
-    Key Responsibilities:
-    - Manage connections to PLAXIS Input (g_i) and Output (g_o) API servers.
-    - Orchestrate model setup by executing sequences of API callables generated by builder modules.
-    - Trigger calculations in PLAXIS.
-    - Orchestrate results extraction by executing sequences of API callables on the Output server.
-    - Provide error mapping for common PLAXIS issues encountered via API or CLI.
-
-    Attributes:
-        plaxis_path (Optional[str]): Path to PLAXIS executable (e.g., Plaxis3DInput.exe), primarily for CLI.
-        project_settings (Optional[ProjectSettings]): Holds configuration like API ports, passwords, file paths, and model data.
-        s_i, g_i (Optional[Any]): PLAXIS input server object and global scripting interface object.
-                                   `s_i` is the server connection, `g_i` is used for most commands.
-        s_o, g_o (Optional[Any]): PLAXIS output server object and global scripting interface object.
-                                   `s_o` is the server connection, `g_o` is used for result queries.
-        _default_input_port (int): Default port for the PLAXIS input server.
-        _default_output_port (int): Default port for the PLAXIS output server.
-        _default_api_password (str): Default placeholder password for API connection. **User must override this.**
-        use_api (bool): Flag indicating if an API connection is currently active and considered the primary method.
-        plaxis_process (Optional[subprocess.Popen]): Handle to the PLAXIS CLI process if it's launched by this interactor.
-
-    Core Assumptions:
-    1.  PLAXIS API Availability: The PLAXIS application's HTTP/RPC server for Python scripting is enabled
-        and accessible on the configured host (usually localhost) and ports.
-    2.  `project_settings`: This object is expected to be populated with all necessary data including:
-        - API connection details (input/output ports, password).
-        - Paths for opening/saving PLAXIS project files.
-        - All parameters required by the builder modules to define the geotechnical model.
-    3.  Builder Modules (`geometry_builder`, `soil_builder`, `calculation_builder`): These modules are
-        responsible for generating lists of Python callables. Each callable must:
-        - Accept one argument: the PLAXIS global input object (`g_i`).
-        - Perform specific PLAXIS API actions (e.g., `g_i.soilmat()`, `g_i.setproperties(...)`).
-        - Raise exceptions (ideally `PlxScriptingError` or subtypes) on failure.
-    4.  `results_parser` Module: Functions within this module are expected to:
-        - Accept one primary argument: the PLAXIS global output object (`g_o`).
-        - Accept other necessary parameters (e.g., names of objects to query, phase identifiers).
-        - Interact with `g_o` to fetch and process specific results.
-        - Return parsed data in a structured format (e.g., lists of dicts, custom objects).
-    5.  PLAXIS API Behavior:
-        - `new_server(host, port, password)`: Establishes connection and returns server (`s_`) and global (`g_`) objects.
-        - `g_i.new()`: Creates a new project in the input environment.
-        - `s_i.open(filepath)`: Opens an existing project file in the input environment. Note: `s_i`, not `g_i`.
-        - `g_i.save(filepath)`: Saves the current project in the input environment.
-        - `g_i.calculate()`: Runs the calculation for the currently defined phases. This is assumed to be blocking.
-        - `s_o.open(filepath)`: Opens a calculated project file in the output environment for result inspection.
-        - PLAXIS object model: Accessing objects (e.g., `g_i.Soils`, `g_o.Phases`) and their properties/methods
-          is done as per the PLAXIS scripting reference.
-    6.  Error Handling: The `map_plaxis_error` method attempts to translate raw error messages, but its
-        effectiveness depends on the completeness of known error patterns.
-    7.  Idempotency: Most setup commands are not inherently idempotent. Running setup on an already partially
-        setup model might lead to errors or duplicate objects if not handled carefully by the callables.
-        Opening an existing project (`is_new_project=False`) assumes subsequent callables modify or query,
-        rather than recreate, existing elements unless designed to do so.
-    """
-
     def __init__(self, plaxis_path: Optional[str] = None, project_settings: Optional[ProjectSettings] = None):
-        """
-        Initializes the PlaxisInteractor.
-
-        Args:
-            plaxis_path (Optional[str]): Path to the PLAXIS installation or executable (e.g., Plaxis3DInput.exe).
-                                         This is primarily for the conceptual CLI fallback.
-            project_settings (Optional[ProjectSettings]): The project settings object, containing API connection
-                                                          details, file paths, and model definition parameters.
-        """
         self.plaxis_path: Optional[str] = plaxis_path
         self.project_settings: Optional[ProjectSettings] = project_settings
-
-        self.s_i: Optional[Any] = None  # PLAXIS input server object (from new_server)
-        self.g_i: Optional[Any] = None  # PLAXIS input global object (from new_server, for commands)
-        self.s_o: Optional[Any] = None  # PLAXIS output server object
-        self.g_o: Optional[Any] = None  # PLAXIS output global object (for results)
-
-        # Default ports and password - these should ideally come from project_settings.
-        # These are fallback defaults if project_settings is missing or doesn't specify them.
+        self.s_i: Optional[Any] = None
+        self.g_i: Optional[Any] = None
+        self.s_o: Optional[Any] = None
+        self.g_o: Optional[Any] = None
         self._default_input_port: int = 10000
         self._default_output_port: int = 10001
-        self._default_api_password: str = "YOUR_API_PASSWORD" # IMPORTANT: User must configure this securely.
-
-        self.use_api: bool = False # Flag to track if API connection is successfully established and preferred.
-        self.plaxis_process: Optional[subprocess.Popen] = None # Stores the subprocess if CLI is used.
-
-        print(f"PlaxisInteractor initialized. PLAXIS exe path: {plaxis_path or 'Not specified (API only assumed)'}")
-        # Note: Actual connection attempts are deferred until a method requiring it is called,
-        # allowing the interactor to be instantiated even if PLAXIS isn't immediately available.
+        self._default_api_password: str = "YOUR_API_PASSWORD" # Ensure this is changed or configured
+        self.plaxis_process: Optional[subprocess.Popen] = None
+        logger.info(f"PlaxisInteractor initialized. PLAXIS exe path: {plaxis_path or 'Not specified (API only assumed)'}")
 
     def _get_api_credentials(self) -> Tuple[str, int, int, str]:
-        """
-        Retrieves API host, input/output ports, and password.
-        Prioritizes values from `self.project_settings` if available, otherwise uses interactor's defaults.
-
-        Returns:
-            Tuple[str, int, int, str]: (host, input_port, output_port, password)
-        """
-        host: str = "localhost" # Standard host for local PLAXIS API server
+        # ... (implementation remains the same, ensure logger.critical for default password)
+        host: str = "localhost"
         input_port: int = self._default_input_port
         output_port: int = self._default_output_port
         password: str = self._default_api_password
-
         if self.project_settings:
-            # Override with values from project_settings if they are set
             input_port = self.project_settings.plaxis_api_input_port
             output_port = self.project_settings.plaxis_api_output_port
-            # Only override password if it's explicitly set in project_settings and not empty
             if self.project_settings.plaxis_api_password:
                 password = self.project_settings.plaxis_api_password
             else:
-                # If password in settings is empty, it might mean user intends to use a default
-                # or hasn't configured it. We issue a warning if the placeholder default is used.
-                print("Warning: API password in project settings is empty or not set. Using interactor default.")
-
-        if password == "YOUR_API_PASSWORD": # Check if the placeholder default is still active
-            print("CRITICAL WARNING: Using default PLAXIS API password ('YOUR_API_PASSWORD'). "
-                  "Please configure a secure password in project settings for security.")
+                logger.warning("API password in project settings is empty or not set. Using interactor default.")
+        if password == "YOUR_API_PASSWORD": # Critical if default password is used
+            logger.critical("Using default PLAXIS API password ('YOUR_API_PASSWORD'). This is insecure. Configure a proper password.")
+            # Consider raising PlaxisConfigurationError here if strict policy is needed
         return host, input_port, output_port, password
 
-    def _connect_to_input_server(self) -> bool:
-        """
-        Attempts to connect to the PLAXIS Input API server (g_i).
-        Sets `self.s_i` (server object) and `self.g_i` (global scripting interface) on success.
-        Sets `self.use_api = True` on success.
-
-        Returns:
-            bool: True if connection is successful, False otherwise.
-
-        Internal Assumptions:
-        - `plxscripting.easy.new_server` is the correct method to establish connection.
-        - Accessing `g_i.Project.Title.value` is a valid lightweight check for connection health
-          and to confirm the global object `g_i` is responsive.
-        """
-        if self.g_i and self.s_i: # If already connected
+    def _connect_to_input_server(self) -> None: # Changed return type to None, raises on failure
+        if self.g_i and self.s_i:
             try:
-                _ = self.g_i.Project.Title.value # Lightweight check for existing connection
-                print("Input server connection already active.")
-                return True # Connection seems alive
-            except Exception as e: # Connection likely lost or g_i became invalid
-                print(f"Input API connection check failed (was {self.use_api}): {e}. Attempting to reconnect.")
-                self.s_i, self.g_i, self.use_api = None, None, False # Reset state before retry
+                _ = self.g_i.Project.Title.value # Simple check
+                logger.info("Input server connection already active.")
+                return
+            except Exception as e:
+                logger.warning(f"Input API connection check failed: {e}. Attempting to reconnect.", exc_info=True)
+                self.s_i, self.g_i = None, None
 
         host, input_port, _, password = self._get_api_credentials()
-        print(f"Attempting to connect to PLAXIS Input API on {host}:{input_port}...")
+        logger.info(f"Attempting to connect to PLAXIS Input API on {host}:{input_port}...")
         try:
             self.s_i, self.g_i = new_server(host, input_port, password=password)
-            _ = self.g_i.Project.Title.value # Test command to confirm connection is responsive
-            print(f"Successfully connected to PLAXIS Input API. Current project title: '{_}'.")
-            self.use_api = True # Mark API as the active and preferred method
-            return True
-        except PlxScriptingError as e:
-            # Specific PLAXIS scripting error (e.g., library issues, server-side script errors during connection)
-            print(f"PLAXIS Input API PlxScriptingError ({host}:{input_port}): {e}")
-            self.map_plaxis_error(str(e)) # Map to a user-friendly message
-            self.s_i, self.g_i = None, None # Ensure state is clean on failure
-            self.use_api = False
-            return False
-        except Exception as e:
-            # Generic errors (e.g., ConnectionRefusedError if server is not running, timeouts)
-            print(f"Generic error connecting to PLAXIS Input API ({host}:{input_port}): {e}")
-            self.map_plaxis_error(str(e))
+            project_title_value = self.g_i.Project.Title.value # Verify connection
+            logger.info(f"Successfully connected to PLAXIS Input API. Current project title: '{project_title_value}'.")
+        except Exception as e: # Catch PlxScriptingError or any other
             self.s_i, self.g_i = None, None
-            self.use_api = False
-            return False
+            raise _map_plaxis_sdk_exception_to_custom(e, f"connecting to Input API ({host}:{input_port})")
 
-    def _connect_to_output_server(self, project_file_to_open: Optional[str] = None) -> bool:
-        """
-        Attempts to connect to the PLAXIS Output API server (g_o).
-        If `project_file_to_open` is provided, it attempts to open this file using `s_o.open()`,
-        making its results available via `g_o`.
-        Sets `self.s_o` and `self.g_o` on success.
-
-        Args:
-            project_file_to_open (Optional[str]): Full path to a PLAXIS project file (.p3dxml, .p2dx)
-                                                  to be opened in the Output environment for results.
-
-        Returns:
-            bool: True if connection (and optional file open) is successful, False otherwise.
-
-        Internal Assumptions:
-        - PLAXIS Output server runs on a separate port or can be a separate connection instance.
-        - `s_o.open(filepath)` is the method to load a project's results into the Output server context.
-          The `g_o` object is then expected to reflect the content of this opened file.
-        - Accessing `g_o.ResultTypes` is a valid lightweight check for connection health.
-        """
-        if self.g_o and self.s_o: # If already connected
+    def _connect_to_output_server(self, project_file_to_open: Optional[str] = None) -> None: # Changed return type
+        if self.g_o and self.s_o:
             try:
-                _ = self.g_o.ResultTypes # Lightweight check for existing connection
-                # If a specific project file needs to be opened, and we are already connected,
-                # we might need to ensure the current g_o context is for that file.
+                _ = self.g_o.ResultTypes # Simple check
                 if project_file_to_open and hasattr(self.s_o, 'open'):
-                    print(f"Output server already connected. Attempting to (re)open '{project_file_to_open}' to set context.")
-                    self.s_o.open(project_file_to_open) # Attempt to switch context
-                    # TODO: Add a more robust check here to confirm g_o now reflects the newly opened file,
-                    # e.g., by checking g_o.generalinfo.Filename if available.
-                    print(f"Opened/Re-opened '{project_file_to_open}' in existing output server context.")
+                    logger.info(f"Output server already connected. Attempting to (re)open '{project_file_to_open}'.")
+                    self.s_o.open(project_file_to_open) # This can also raise
+                    logger.info(f"Successfully (re)opened '{project_file_to_open}' in existing output server.")
                 else:
-                    print("Output server already connected. No new file to open, or s_o lacks 'open' method for context switch.")
-                return True # Connection seems alive
+                    logger.info("Output server already connected. No new file specified or s_o cannot open files.")
+                return
             except Exception as e:
-                print(f"Output API connection check/re-open failed: {e}. Attempting to reconnect.")
-                self.s_o, self.g_o = None, None # Reset state before attempting full reconnect
+                logger.warning(f"Output API connection check/re-open failed: {e}. Attempting to reconnect.", exc_info=True)
+                self.s_o, self.g_o = None, None
 
         host, _, output_port, password = self._get_api_credentials()
-        print(f"Attempting to connect to PLAXIS Output API on {host}:{output_port}...")
+        logger.info(f"Attempting to connect to PLAXIS Output API on {host}:{output_port}...")
         try:
             self.s_o, self.g_o = new_server(host, output_port, password=password)
-            _ = self.g_o.ResultTypes # Test command to confirm connection is responsive
-            print(f"Successfully connected to PLAXIS Output API on {host}:{output_port}.")
+            _ = self.g_o.ResultTypes # Verify connection
+            logger.info(f"Successfully connected to PLAXIS Output API on {host}:{output_port}.")
 
             if project_file_to_open:
                 if not os.path.exists(project_file_to_open):
-                    print(f"Error: Project file for output results does not exist: {project_file_to_open}")
-                    # Connection to server might be successful, but opening this specific file will fail later.
-                    # This state might be acceptable if the user intends to work with a globally active output project.
-                elif hasattr(self.s_o, 'open'): # Check if the server object supports 'open'
-                    print(f"Attempting to open project '{project_file_to_open}' in Output server...")
+                    raise PlaxisConfigurationError(f"Project file for output results does not exist: {project_file_to_open}")
+                if hasattr(self.s_o, 'open'):
+                    logger.info(f"Attempting to open project '{project_file_to_open}' in Output server...")
                     self.s_o.open(project_file_to_open)
-                    # After s_o.open, g_o should be populated with data from this file.
-                    # A quick check (example):
-                    if self.g_o.Phases: # Check if Phases attribute is now populated
-                         print(f"Successfully opened '{project_file_to_open}' in PLAXIS Output. Found {len(self.g_o.Phases)} phases.")
+                    # Check if phases exist as a proxy for successful open
+                    if not self.g_o.Phases:
+                        logger.warning(f"Opened '{project_file_to_open}' but no phases found or g_o not updated properly.")
                     else:
-                         # This might happen if the file is empty, not a PLAXIS file, or g_o isn't updated as expected.
-                         print(f"Opened '{project_file_to_open}' but no phases found, or g_o not updated as expected by s_o.open().")
+                        logger.info(f"Successfully opened '{project_file_to_open}'. Found {len(self.g_o.Phases)} phases.")
                 else:
-                    # This case indicates that s_o might be a simpler global object without file operations,
-                    # or an unexpected type of server object was returned by new_server.
-                    print(f"Warning: Output server object (s_o type: {type(self.s_o)}) does not appear to have an 'open' method. "
-                          "Cannot open specific project file via s_o. Results parsing will rely on globally active output project in PLAXIS.")
-            return True # Connection to server itself was successful
-        except PlxScriptingError as e:
-            print(f"PLAXIS Output API PlxScriptingError ({host}:{output_port}): {e}")
-            self.map_plaxis_error(str(e))
+                    logger.warning(f"Output server object (type: {type(self.s_o)}) lacks 'open' method. Cannot open specific project.")
+        except Exception as e: # Catch PlxScriptingError or any other
             self.s_o, self.g_o = None, None
-            return False
-        except Exception as e:
-            print(f"Generic error connecting to PLAXIS Output API ({host}:{output_port}): {e}")
-            self.map_plaxis_error(str(e))
-            self.s_o, self.g_o = None, None
-            return False
+            raise _map_plaxis_sdk_exception_to_custom(e, f"connecting/opening project in Output API ({host}:{output_port})")
 
-    def _execute_cli_script(self, commands: List[str], script_filename: str = "temp_plaxis_script.p3dscript") -> bool:
-        """
-        Internal: Executes a list of PLAXIS CLI-style commands by writing them to a script file
-        and running it via `Plaxis3DInput.exe --runscript=<script_file>`.
-        This method is largely conceptual for complex sequences as API is preferred.
-        The actual subprocess execution part is commented out for safety in automated environments
-        and requires careful implementation of process monitoring, error handling, and timeouts.
-
-        Args:
-            commands (List[str]): A list of CLI command strings.
-            script_filename (str): Temporary filename for the script.
-
-        Returns:
-            bool: True if script execution is conceptually considered successful (actual subprocess part is stubbed).
-
-        Assumptions:
-        - `self.plaxis_path` points to a valid `Plaxis3DInput.exe`.
-        - PLAXIS CLI supports `--runscript` for batch command execution.
-        - Commands are simple CLI strings, not Python API callables.
-        - `self.project_settings.analysis_settings.max_calc_time_seconds` might provide a timeout.
-        """
-        if not self.plaxis_path or "Plaxis3DInput.exe" not in self.plaxis_path : # Basic check
-            print(f"Error: PLAXIS executable path not configured correctly for CLI: '{self.plaxis_path}'")
-            return False
+    def _execute_cli_script(self, commands: List[str], script_filename: str = "temp_plaxis_script.p3dscript") -> None: # Changed return
+        if not self.plaxis_path or "Plaxis3DInput.exe" not in self.plaxis_path: # Basic check
+            raise PlaxisConfigurationError(f"PLAXIS executable path not configured correctly for CLI: '{self.plaxis_path}'")
 
         abs_script_path = os.path.abspath(script_filename)
-        print(f"Writing {len(commands)} commands to script '{abs_script_path}' for CLI.")
+        logger.info(f"Writing {len(commands)} commands to script '{abs_script_path}' for CLI.")
+
         try:
             with open(abs_script_path, 'w') as f:
-                for cmd in commands: f.write(cmd + '\n') # Each command on a new line
+                for cmd in commands: f.write(cmd + '\n')
+        except IOError as e:
+            raise PlaxisCliError(f"IOError writing script file '{abs_script_path}': {e}")
 
-            cli_command_parts = [self.plaxis_path, f"--runscript={abs_script_path}"]
-            print(f"Executing PLAXIS CLI: {' '.join(cli_command_parts)}")
+        cli_command_parts = [self.plaxis_path, f"--runscript={abs_script_path}"]
+        logger.info(f"Executing PLAXIS CLI: {' '.join(cli_command_parts)}")
 
-            # --- Actual Subprocess Execution (conceptual, remains commented for safety in automated envs) ---
-            # This section would handle running the PLAXIS executable as a subprocess.
-            # It requires careful management of stdout/stderr, timeouts, and process termination.
-            #
-            # Example structure:
-            # timeout_duration = (self.project_settings.analysis_settings.max_calc_time_seconds
-            #                     if self.project_settings and hasattr(self.project_settings, 'analysis_settings') and
-            #                        self.project_settings.analysis_settings is not None
-            #                     else 3600) # Default 1 hour
-            # try:
-            #     self.plaxis_process = subprocess.Popen(
-            #         cli_command_parts,
-            #         stdout=subprocess.PIPE,
-            #         stderr=subprocess.PIPE,
-            #         text=True, # Ensure text mode for stdout/stderr
-            #         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0 # type: ignore # Suppress window on Windows
-            #     )
-            #     stdout, stderr = self.plaxis_process.communicate(timeout=timeout_duration) # Blocking call with timeout
-            #
-            #     if self.plaxis_process.returncode == 0:
-            #         print("PLAXIS script via CLI executed successfully.")
-            #         # print(f"PLAXIS CLI STDOUT:\n{stdout}") # Potentially very verbose, use for debugging
-            #         if stderr: # PLAXIS sometimes outputs warnings or info to stderr even on success
-            #             print(f"PLAXIS CLI STDERR (on success):\n{stderr}")
-            #         return True
-            #     else:
-            #         print(f"PLAXIS script via CLI failed with return code: {self.plaxis_process.returncode}")
-            #         error_output = stderr if stderr else stdout # Prefer stderr for errors if available
-            #         print(f"PLAXIS CLI Error Output:\n{error_output}")
-            #         self.map_plaxis_error(error_output) # Try to map from CLI output
-            #         return False
-            # except FileNotFoundError:
-            #     print(f"Error: PLAXIS executable not found at '{self.plaxis_path}'. Check installation path.")
-            #     return False
-            # except subprocess.TimeoutExpired:
-            #     print(f"Error: PLAXIS script execution timed out after {timeout_duration} seconds.")
-            #     if self.plaxis_process:
-            #         self.plaxis_process.kill() # Ensure process is killed if it timed out
-            #         self.plaxis_process.wait() # Wait for kill to complete
-            #     self.map_plaxis_error(f"TimeoutExpired: Process exceeded {timeout_duration}s.")
-            #     return False
-            # except Exception as e: # Catch other potential errors during subprocess management
-            #     print(f"An unexpected error occurred during PLAXIS CLI execution: {e}")
-            # --- Actual Subprocess Execution ---
-            timeout_duration = (self.project_settings.analysis_settings.max_calc_time_seconds
-                                if self.project_settings and
-                                   hasattr(self.project_settings, 'analysis_settings') and # Ensure analysis_settings exists
-                                   self.project_settings.analysis_settings is not None and # Ensure it's not None
-                                   hasattr(self.project_settings.analysis_settings, 'max_calc_time_seconds') and # Ensure field exists
-                                   self.project_settings.analysis_settings.max_calc_time_seconds is not None
-                                else 3600) # Default 1 hour
+        timeout_duration = 3600 # Default
+        if self.project_settings and self.project_settings.analysis_settings:
+            timeout_duration = self.project_settings.analysis_settings.max_calc_time_seconds or timeout_duration
+        logger.debug(f"CLI execution timeout set to: {timeout_duration} seconds.")
 
-            try:
-                # Ensure self.plaxis_path is not None before using it
-                if self.plaxis_path is None:
-                    print("Error: PLAXIS executable path is None. Cannot execute CLI script.")
-                    return False
+        try:
+            if self.plaxis_path is None: # Should be caught by earlier check
+                 raise PlaxisConfigurationError("PLAXIS executable path is None. Cannot execute CLI script.")
 
-                self.plaxis_process = subprocess.Popen(
-                    cli_command_parts,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True, # Ensure text mode for stdout/stderr
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0 # type: ignore # Suppress window on Windows
-                )
-                stdout, stderr = self.plaxis_process.communicate(timeout=timeout_duration) # Blocking call with timeout
+            self.plaxis_process = subprocess.Popen(
+                cli_command_parts, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0 # type: ignore
+            )
+            stdout, stderr = self.plaxis_process.communicate(timeout=timeout_duration)
 
-                if self.plaxis_process.returncode == 0:
-                    print("PLAXIS script via CLI executed successfully.")
-                    if stdout: print(f"PLAXIS CLI STDOUT:\n{stdout}") # Potentially very verbose, use for debugging
-                    if stderr: print(f"PLAXIS CLI STDERR (on success):\n{stderr}") # PLAXIS sometimes outputs warnings or info to stderr
-                    return True
-                else:
-                    print(f"PLAXIS script via CLI failed with return code: {self.plaxis_process.returncode}")
-                    error_output = stderr if stderr else stdout # Prefer stderr for errors if available
-                    print(f"PLAXIS CLI Error Output:\n{error_output}")
-                    self.map_plaxis_error(error_output) # Try to map from CLI output
-                    return False
-            except FileNotFoundError:
-                print(f"Error: PLAXIS executable not found at '{self.plaxis_path}'. Check installation path.")
-                return False
-            except subprocess.TimeoutExpired:
-                print(f"Error: PLAXIS script execution timed out after {timeout_duration} seconds.")
-                if self.plaxis_process:
-                    self.plaxis_process.kill() # Ensure process is killed if it timed out
-                    self.plaxis_process.wait() # Wait for kill to complete
-                self.map_plaxis_error(f"TimeoutExpired: Process exceeded {timeout_duration}s.")
-                return False
-            except Exception as e: # Catch other potential errors during subprocess management
-                print(f"An unexpected error occurred during PLAXIS CLI execution: {e}")
-                self.map_plaxis_error(str(e))
-                return False
-            # print("STUB: _execute_cli_script - subprocess execution part is conceptual and commented out. Returning True for stub.")
-            # return True # Placeholder for successful stub execution
-        except IOError as e: # Error writing the script file
-            print(f"IOError writing/reading script file '{abs_script_path}': {e}")
-            return False
+            if self.plaxis_process.returncode == 0:
+                logger.info("PLAXIS script via CLI executed successfully.")
+                if stdout: logger.debug(f"PLAXIS CLI STDOUT:\n{stdout}")
+                if stderr: logger.warning(f"PLAXIS CLI STDERR (on success):\n{stderr}")
+            else:
+                error_output = stderr if stderr else stdout
+                # Use a more specific exception for CLI failures
+                raise PlaxisCliError(f"PLAXIS script via CLI failed. RC: {self.plaxis_process.returncode}. Output:\n{error_output}")
+
+        except FileNotFoundError: # For plaxis_path not found at execution time
+            raise PlaxisConfigurationError(f"PLAXIS executable not found at '{self.plaxis_path}'. Check path.")
+        except subprocess.TimeoutExpired:
+            logger.error(f"PLAXIS script execution timed out after {timeout_duration}s.", exc_info=True)
+            if self.plaxis_process:
+                self.plaxis_process.kill()
+                self.plaxis_process.wait()
+            raise PlaxisCalculationError(f"TimeoutExpired: PLAXIS CLI process exceeded {timeout_duration}s.") # Calculation related
+        except Exception as e: # Catch other subprocess errors
+            raise PlaxisCliError(f"Unexpected error during PLAXIS CLI execution: {e}")
         finally:
-            # Clean up the temporary script file
             if os.path.exists(abs_script_path):
-                try:
-                    os.remove(abs_script_path)
-                    print(f"Removed temporary script file: {abs_script_path}")
-                except OSError as e:
-                    print(f"Warning: Could not remove temporary script file '{abs_script_path}': {e}")
-            # pass # Original pass statement removed as cleanup is now active
+                try: os.remove(abs_script_path)
+                except OSError as e: logger.warning(f"Could not remove temporary script file '{abs_script_path}': {e}")
 
-    def _execute_api_commands(self, commands: List[Callable[[Any], None]], server_global_object: Any, server_name: str) -> bool:
-        """
-        Internal: Executes a list of PLAXIS API callables on the given server global object (g_i or g_o).
-        Each callable in the list should be a function that accepts one argument: the PLAXIS global object.
-
-        Args:
-            commands (List[Callable[[Any], None]]): List of functions to execute.
-            server_global_object (Any): The PLAXIS global object (g_i or g_o) to pass to callables.
-            server_name (str): Name of the server ("Input" or "Output") for logging.
-
-        Returns:
-            bool: True if all commands execute successfully, False if any command fails.
-
-        Assumptions:
-        - Each callable correctly interacts with the PLAXIS API via the passed global object.
-        - Callables will raise PlxScriptingError or other exceptions on failure, which are caught here.
-        """
+    def _execute_api_commands(self, commands: List[Callable[[Any], None]], server_global_object: Any, server_name: str) -> None: # Changed return
         if not server_global_object:
-            print(f"Error: {server_name} global object (g_i/g_o) is not available. Cannot execute API commands.")
-            return False
+            raise PlaxisConnectionError(f"{server_name} global object (g_i/g_o) is not available.")
 
-        print(f"Executing {len(commands)} API commands on {server_name} server...")
+        logger.info(f"Executing {len(commands)} API commands on {server_name} server...")
         for i, cmd_callable in enumerate(commands):
-            # Attempt to get a descriptive name for the callable for logging
             command_name = getattr(cmd_callable, '__name__', f"lambda_cmd_at_index_{i+1}")
             try:
-                print(f"  Executing API command {i+1}/{len(commands)}: {command_name}")
-                cmd_callable(server_global_object) # Execute the function, passing the g_i/g_o object
+                logger.debug(f"  Executing API command {i+1}/{len(commands)}: {command_name}")
+                cmd_callable(server_global_object)
+            except Exception as e: # Catch PlxScriptingError or any other
+                # Let map_plaxis_sdk_exception_to_custom decide the type of PlaxisAutomationError
+                raise _map_plaxis_sdk_exception_to_custom(e, f"executing API command '{command_name}' on {server_name}")
+        logger.info(f"Successfully executed all {len(commands)} API commands on {server_name} server.")
 
-                # Optional: Add a small delay if PLAXIS needs time to process certain commands,
-                # though this is usually not necessary for synchronous API calls.
-                # time.sleep(0.05)
-            except PlxScriptingError as e: # Catch specific PLAXIS scripting errors
-                print(f"PLAXIS API command '{command_name}' failed with PlxScriptingError: {e}")
-                self.map_plaxis_error(str(e)) # Map and log the error
-                return False # Stop on first error
-            except Exception as e: # Catch other unexpected errors during callable execution
-                print(f"Unexpected error executing API command '{command_name}': {e}")
-                self.map_plaxis_error(str(e)) # Try to map it
-                return False # Stop on first error
-
-        print(f"Successfully executed all {len(commands)} API commands on {server_name} server.")
-        return True
-
-    def setup_model_in_plaxis(self, model_setup_callables: List[Callable[[Any], None]], is_new_project: bool = True) -> bool:
-        """
-        Sets up the model in PLAXIS using the Python API.
-        Orchestrates connection, project initialization (new/open), and execution of model definition callables.
-
-        Args:
-            model_setup_callables (List[Callable[[Any], None]]):
-                A list of functions, where each function takes the PLAXIS input global object (g_i)
-                as an argument and performs specific model setup actions (e.g., create material, define geometry).
-            is_new_project (bool):
-                If True, a new PLAXIS project is created (`g_i.new()`).
-                If False, an existing project is opened using `self.s_i.open(project_file_path)`.
-                The `project_file_path` is expected to be in `self.project_settings`.
-
-        Returns:
-            bool: True if model setup is successful, False otherwise.
-
-        Assumptions:
-        - `self.project_settings` is set and contains necessary info (project_name, project_file_path if opening, API credentials).
-        - `model_setup_callables` are correctly structured to work with `g_i`.
-        - For opening existing projects, `self.project_settings.project_file_path` is valid and points to an existing file.
-        - Unit settings are either handled by PLAXIS defaults/templates or should be part of `model_setup_callables`
-          (e.g., using `g_i.command('set Project.UnitLength "m"')`).
-        """
+    def setup_model_in_plaxis(self, model_setup_callables: List[Callable[[Any], None]], is_new_project: bool = True) -> None: # Changed return
         if not self.project_settings:
-            print("Error: ProjectSettings not provided to PlaxisInteractor. Cannot setup model.")
-            return False
+            raise PlaxisConfigurationError("ProjectSettings not provided to PlaxisInteractor.")
 
-        if not self._connect_to_input_server(): # Ensure connection to input server
-            # TODO: Consider a CLI fallback for model setup if API fails and `self.plaxis_path` is available.
-            # This would be complex as it requires translating Python API callables into a CLI script.
-            print("API connection for input failed. CLI fallback for model setup not yet implemented for callables. Setup failed.")
-            return False
+        self._connect_to_input_server() # Raises on failure
+        logger.info(f"Setting up PLAXIS model via API. New project: {is_new_project}")
 
-        print(f"Setting up PLAXIS model via API. New project: {is_new_project}")
-
-        # --- Initial Project Commands (New or Open) ---
         if is_new_project:
-            # For a new project, use g_i.new() and g_i.settitle()
             initial_api_commands: List[Callable[[Any], None]] = [lambda gi: gi.new()]
             if self.project_settings.project_name:
                  initial_api_commands.append(lambda gi: gi.settitle(self.project_settings.project_name))
-
-            # TODO: Add commands for setting project units based on `self.project_settings.units_system`
-            # and specific unit preferences if available in ProjectSettings.
-            # Example:
-            # if self.project_settings.units_system == "SI":
-            #     initial_api_commands.append(lambda gi: gi.command('set Project.UnitLength "m"'))
-            #     initial_api_commands.append(lambda gi: gi.command('set Project.UnitForce "kN"'))
-            #     initial_api_commands.append(lambda gi: gi.command('set Project.UnitTime "day"'))
-            print("Conceptual: Unit setting commands for new project would be added here based on project_settings.")
-
-            # Execute these initial commands for new project creation
-            if not self._execute_api_commands(initial_api_commands, self.g_i, "Input (g_i) - Project Init"):
-                print("Failed to initialize new project (e.g., g_i.new() or g_i.settitle() failed).")
-                return False
-        else: # Opening an existing project
+            # Conceptual: Unit settings would be added here
+            self._execute_api_commands(initial_api_commands, self.g_i, "Input (g_i) - Project Init")
+        else: # Opening existing project
             project_file_path = self.project_settings.project_file_path
             if not project_file_path or not os.path.exists(project_file_path):
-                print(f"Error: Project file path for opening is not specified, invalid, or file does not exist: '{project_file_path}'")
-                return False
-            if not self.s_i or not hasattr(self.s_i, 'open'): # s_i must be valid and have 'open'
-                 print("Error: Input server object (s_i) is not available or does not have an 'open' method. Cannot open project.")
-                 return False
-
+                raise PlaxisConfigurationError(f"Project file path for opening is not specified or file does not exist: '{project_file_path}'")
+            if not self.s_i or not hasattr(self.s_i, 'open'):
+                 raise PlaxisConnectionError("Input server object (s_i) unavailable or lacks 'open' method.")
             try:
-                print(f"  Attempting to open existing project: '{project_file_path}' using s_i.open()")
-                self.s_i.open(project_file_path) # s_i.open() is used for opening files, not g_i.open()
-                print(f"Project '{project_file_path}' opened successfully.")
-                # After s_i.open(), g_i should be contextually aware of the opened project.
-                # Optionally verify title if project_settings has an expected name for the opened file.
-                if self.project_settings.project_name and self.g_i: # Ensure g_i is not None
-                    try:
-                        current_title = self.g_i.Project.Title.value
-                        if current_title != self.project_settings.project_name:
-                            print(f"Note: Opened project title ('{current_title}') differs from expected in settings ('{self.project_settings.project_name}').")
-                    except Exception: # Ignore if title cannot be read or project has no title property immediately.
-                        pass
-            except Exception as e: # Catch errors specifically from s_i.open()
-                print(f"Failed to open existing project '{project_file_path}': {e}")
-                self.map_plaxis_error(str(e))
-                return False
+                logger.info(f"Attempting to open existing project: '{project_file_path}' using s_i.open()")
+                self.s_i.open(project_file_path) # This can raise
+                logger.info(f"Project '{project_file_path}' opened successfully.")
+                # Optional: Verify title if needed
+            except Exception as e:
+                raise _map_plaxis_sdk_exception_to_custom(e, f"opening existing project '{project_file_path}'")
 
-        # --- Execute Model Definition Callables ---
-        # These callables (e.g., from geometry_builder, soil_builder) define the model specifics.
-        # They apply to the currently active project in g_i (newly created or opened).
         if model_setup_callables:
-            print(f"Executing {len(model_setup_callables)} main model setup callables...")
-            if not self._execute_api_commands(model_setup_callables, self.g_i, "Input (g_i) - Model Definition"):
-                print("Failed during execution of main model setup callables.")
-                return False
-        else: # No further callables to execute after new/open.
-            print("No main model setup callables provided (or not applicable after opening an existing project without further modifications).")
-            if not is_new_project: # If opening an existing project and no further changes are specified, consider it a success.
-                return True
-            # If it was a new project and no setup callables, it's effectively an empty project setup, which is also fine.
+            logger.info(f"Executing {len(model_setup_callables)} main model setup callables...")
+            self._execute_api_commands(model_setup_callables, self.g_i, "Input (g_i) - Model Definition")
+        elif is_new_project: # Only log if it was a new project and no callables
+            logger.info("New project initialized, but no further model setup callables were provided.")
 
-        print("PLAXIS model setup phase completed successfully via API.")
-        return True
+        logger.info("PLAXIS model setup phase completed successfully via API.")
 
-
-    def run_calculation(self, calculation_run_callables: List[Callable[[Any], None]]) -> bool:
-        """
-        Runs the PLAXIS calculation using the Python API.
-        This involves executing a list of callables that typically handle meshing,
-        phase setup, and finally triggering the `g_i.calculate()` command.
-
-        Args:
-            calculation_run_callables (List[Callable[[Any], None]]):
-                A list of functions that take `g_i` and perform calculation setup
-                (e.g., `g_i.gotomesh()`, `g_i.mesh()`, phase definitions) and the
-                final `g_i.calculate()` call.
-
-        Returns:
-            bool: True if calculation sequence (including subsequent project save) is successful, False otherwise.
-
-        Assumptions:
-        - `self.project_settings` is set, providing `project_file_path` for saving.
-          If `project_file_path` is not set (e.g., for a new, unsaved project), a default path is constructed.
-        - `calculation_run_callables` are correctly structured and are expected to include the `g_i.calculate()` call
-          as the final or near-final step in the sequence.
-        - `g_i.save(filepath)` is the correct method to save the project after calculation.
-        """
+    def run_calculation(self, calculation_run_callables: List[Callable[[Any], None]]) -> None: # Changed return
         if not self.project_settings:
-            print("Error: ProjectSettings not provided. Cannot run calculation (needed for save path).")
-            return False
+            raise PlaxisConfigurationError("ProjectSettings not provided. Cannot run calculation.")
+        if not self.g_i: # Ensure connection if not already established
+            self._connect_to_input_server()
 
-        if not self.g_i: # Ensure input server is connected and g_i is available
-            if not self._connect_to_input_server():
-                print("API connection for input failed. Cannot run calculation.")
-                return False
+        logger.info("Running PLAXIS calculation sequence via API...")
+        self._execute_api_commands(calculation_run_callables, self.g_i, "Input (g_i) - Calculation Sequence")
+        logger.info("Calculation sequence (including g_i.calculate() if present) reported success by PLAXIS.")
 
-        print("Running PLAXIS calculation sequence via API...")
-        if not self._execute_api_commands(calculation_run_callables, self.g_i, "Input (g_i) - Calculation Sequence"):
-            print("Failed during execution of calculation sequence callables (e.g., meshing, phase setup, or g_i.calculate()).")
-            return False
-        # If _execute_api_commands returned True, it implies g_i.calculate() (if included) also reported no error.
-        print("Calculation sequence (including g_i.calculate() if present) reported success by _execute_api_commands.")
-
-        # --- Save Project After Successful Calculation ---
         project_save_path = self.project_settings.project_file_path
         if not project_save_path:
-            # Construct a default save path if not specified in settings (e.g., for a new, unsaved project)
-            # User should ideally provide a save path via frontend for new projects before initiating calculation.
-            default_filename = (self.project_settings.project_name or "UntitledPlaxisProject") + ".p3dxml" # Or .p3d for older versions
-            # Save in current working directory or a designated output directory if configured.
-            # For now, using current working directory.
+            default_filename = (self.project_settings.project_name or "UntitledPlaxisProject") + ".p3dxml"
             project_save_path = os.path.join(os.getcwd(), default_filename)
-            print(f"Warning: `project_file_path` not set in ProjectSettings. Attempting to save to default path: {project_save_path}")
+            logger.warning(f"`project_file_path` not set. Attempting to save to default: {project_save_path}")
 
-        print(f"Attempting to save project to '{project_save_path}' after calculation...")
-
+        logger.info(f"Attempting to save project to '{project_save_path}' after calculation...")
         if self.g_i and hasattr(self.g_i, 'save') and callable(self.g_i.save):
-            save_cmd_callable = lambda gi_param: gi_param.save(project_save_path) # Use lambda for consistency with _execute_api_commands
-            if not self._execute_api_commands([save_cmd_callable], self.g_i, "Input (g_i) - Save Project"):
-               print(f"Warning: Failed to save project to '{project_save_path}' after calculation.")
-               # Note: Calculation itself might have succeeded, but save failed.
-               # Depending on requirements, this might still be considered an overall failure.
-               # For now, the method returns True if calculation part was okay, as save is post-calc.
-            else:
-               print(f"Project successfully saved to '{project_save_path}' after calculation.")
-               # If a default path was used because original was empty, update project_settings so this path is known for result extraction.
-               if not self.project_settings.project_file_path:
-                   self.project_settings.project_file_path = project_save_path
-                   print(f"Updated project_settings.project_file_path to reflect actual save location: {project_save_path}")
+            save_cmd_callable = lambda gi_param: gi_param.save(project_save_path) # type: ignore
+            try:
+                self._execute_api_commands([save_cmd_callable], self.g_i, "Input (g_i) - Save Project")
+                logger.info(f"Project successfully saved to '{project_save_path}' after calculation.")
+                if not self.project_settings.project_file_path: # Update settings if it was a default path
+                    self.project_settings.project_file_path = project_save_path
+            except PlaxisAutomationError as e: # Catch if save fails specifically
+               logger.warning(f"Failed to save project to '{project_save_path}' after calculation: {e}", exc_info=True)
+               # Decide if this should re-raise or just be a warning
         else:
-            print("Warning: `g_i.save` method not available or not callable on the g_i object. Cannot save project after calculation.")
-            # This is a significant issue if saving is required.
-
-        print("PLAXIS calculation and subsequent save attempt finished.")
-        return True # Returns True if the calculation_run_callables succeeded. Save issues are warnings.
+            logger.warning("`g_i.save` method not available. Cannot save project after calculation.")
+        logger.info("PLAXIS calculation and subsequent save attempt finished.")
 
     def extract_results(self, results_extraction_callables: List[Callable[[Any], Any]]) -> List[Any]:
-        """
-        Extracts results from PLAXIS using the Python Output API.
-        Connects to the Output server, opens the calculated project file (path from `project_settings`),
-        and executes a list of callables designed to parse specific results using `g_o`.
-
-        Args:
-            results_extraction_callables (List[Callable[[Any], Any]]):
-                A list of functions. Each function:
-                - Takes the PLAXIS output global object (`g_o`) as an argument.
-                - Interacts with `g_o` to fetch specific results.
-                - Returns the parsed data piece (e.g., a float, a list of dicts, a custom object).
-
-        Returns:
-            List[Any]: A list containing the data returned by each successful callable in `results_extraction_callables`.
-                       If major errors occur (e.g., connection failure, file open failure, `g_o` unavailable),
-                       an empty list is returned. If an individual callable fails, `None` (or an error marker)
-                       might be appended for that piece, depending on the callable's own error handling.
-
-        Assumptions:
-        - `self.project_settings` is set and `project_settings.project_file_path` correctly points to the
-          calculated PLAXIS model file from which results are to be extracted.
-        - `results_extraction_callables` are designed to work with `g_o` and return meaningful data or handle their own errors gracefully.
-        - `_connect_to_output_server` correctly handles opening the specified project file and making its context available via `g_o`.
-        """
         if not self.project_settings or not self.project_settings.project_file_path:
-            print("Error: ProjectSettings or `project_file_path` not provided in PlaxisInteractor. "
-                  "Cannot determine which PLAXIS file to extract results from.")
-            return [] # Return empty list indicating failure to get any results
+            raise PlaxisConfigurationError("ProjectSettings or project_file_path not provided for results extraction.")
 
         calculated_project_path = self.project_settings.project_file_path
-        if not os.path.exists(calculated_project_path): # Ensure the file actually exists before trying to open
-            print(f"Error: Calculated project file for results extraction not found at the specified path: {calculated_project_path}")
-            return []
+        if not os.path.exists(calculated_project_path):
+            raise PlaxisOutputError(f"Calculated project file for results not found: {calculated_project_path}")
 
-        # Attempt to connect to output server and open the project file for results
-        if not self._connect_to_output_server(project_file_to_open=calculated_project_path):
-            print(f"API connection to PLAXIS Output server failed or could not open project '{calculated_project_path}'. "
-                  "Cannot extract results.")
-            return []
-
-        print(f"Extracting results via API from PLAXIS Output for project: {calculated_project_path}")
+        self._connect_to_output_server(project_file_to_open=calculated_project_path) # Raises on failure
+        logger.info(f"Extracting results via API from PLAXIS Output for project: {calculated_project_path}")
 
         extracted_data_list: List[Any] = []
-        if not self.g_o: # Double-check g_o is available after connection and file open attempt
-            print("Error: PLAXIS Output global object (g_o) is not available after connection attempt. Cannot extract results.")
-            return [] # Critical failure if g_o is not set up
+        if not self.g_o: # Should be guaranteed by _connect_to_output_server
+            raise PlaxisConnectionError("PLAXIS Output global object (g_o) unavailable after connection attempt.")
 
-        # Execute each result extraction callable
         for i, cmd_callable in enumerate(results_extraction_callables):
             command_name = getattr(cmd_callable, '__name__', f"lambda_res_cmd_at_index_{i+1}")
             try:
-                print(f"  Executing result extraction command {i+1}/{len(results_extraction_callables)}: {command_name}")
-                # Each callable should take g_o and return the parsed data.
+                logger.debug(f"Executing result extraction command {i+1}/{len(results_extraction_callables)}: {command_name}")
                 result_piece = cmd_callable(self.g_o)
                 extracted_data_list.append(result_piece)
-            except PlxScriptingError as e: # Specific PLAXIS error during this callable's execution
-                print(f"PLAXIS API result command '{command_name}' failed with PlxScriptingError: {e}")
-                self.map_plaxis_error(str(e))
-                extracted_data_list.append(None) # Append None or a more specific error marker for this piece
-                # Optionally, decide whether to stop all extraction on one failure or continue:
-                # return [] # Option: Stop and return empty/partial on first error for stricter error handling
-            except Exception as e: # Other unexpected error during this callable
-                print(f"Unexpected error executing result command '{command_name}': {e}")
-                self.map_plaxis_error(str(e))
-                extracted_data_list.append(None) # Append None or an error marker
-                # return [] # Option: Stop
+            except Exception as e: # Catch PlxScriptingError or any other
+                logger.error(f"Result extraction command '{command_name}' failed: {e}", exc_info=True)
+                # Map and potentially append a placeholder or error object
+                mapped_error = _map_plaxis_sdk_exception_to_custom(e, f"extracting result '{command_name}'")
+                extracted_data_list.append(mapped_error) # Store the error itself or a marker
 
-        print(f"Successfully executed {len(results_extraction_callables)} result extraction callables, yielding {len(extracted_data_list)} result pieces.")
+        logger.info(f"Executed {len(results_extraction_callables)} result callables, yielding {len(extracted_data_list)} pieces.")
         return extracted_data_list
 
+    def map_plaxis_error(self, raw_error_message: str) -> str: # This method is now mostly a fallback/logger
+        """Legacy error mapper, primary mapping is now in _map_plaxis_sdk_exception_to_custom."""
+        # This method can still be used for CLI error strings if needed,
+        # but SDK errors should go through _map_plaxis_sdk_exception_to_custom.
+        logger.warning(f"Legacy map_plaxis_error called with: {raw_error_message}. Prefer raising specific exceptions.")
+        # Simplified version, as detailed mapping is in the new function.
+        # This might still be useful for very generic CLI output parsing if _map_plaxis_sdk_exception_to_custom is not suitable.
+        lower_error = raw_error_message.lower()
+        if "connection refused" in lower_error: return "ConnectionRefused"
+        if "password incorrect" in lower_error: return "InvalidPassword"
+        # ... add a few very common CLI patterns if necessary ...
+        return f"PlaxisGenericError: {raw_error_message[:100]}"
 
-    def map_plaxis_error(self, raw_error_message: str) -> str:
-        """
-        Maps a raw PLAXIS error message to a more user-friendly one.
-        PRD Ref: Task 3.9
-        This function attempts to categorize known PLAXIS errors based on keywords in the error message.
-        It's not exhaustive and may need refinement as more specific errors are encountered.
-
-        Args:
-            raw_error_message (str): The original error message from PLAXIS (API or CLI).
-
-        Returns:
-            str: A more user-friendly interpretation of the error.
-        """
-        # Log the raw error for debugging, regardless of mapping, as it contains full details.
-        print(f"PLAXIS Raw Error: {raw_error_message}")
-
-        lower_error = raw_error_message.lower() # Case-insensitive matching
-
-        # Connection and Authentication Errors
-        if "connection refused" in lower_error or "actively refused it" in lower_error:
-            return ("ConnectionRefused: PLAXIS server is not running or the connection was refused. "
-                    "Ensure PLAXIS application is started and the API server is enabled on the correct port.")
-        if "password incorrect" in lower_error or "authentication failed" in lower_error:
-            return ("InvalidPassword: The password for the PLAXIS API server is incorrect. "
-                    "Please check the password in your project settings.")
-        if "server not responding" in lower_error or "no response from server" in lower_error:
-            return ("ServerNotResponding: The PLAXIS server is not responding. "
-                    "It might be busy, have crashed, or there might be a network issue.")
-
-        # Object, Command, and Property Issues (Common in scripting)
-        if "object not found" in lower_error or "unknown identifier" in lower_error:
-            return ("ObjectNotFound: A specified object (e.g., material, phase, structural element) was not found in the model. "
-                    "Check names for typos and ensure the object exists in the current PLAXIS model state.")
-        if "unknown command" in lower_error or "command is not recognized" in lower_error:
-            return ("UnknownCommand: An invalid command was sent to PLAXIS. "
-                    "This might be a typo in the command name or an unsupported command for the current context or PLAXIS version.")
-        if "does not exist" in lower_error and \
-           ("material" in lower_error or "phase" in lower_error or "object" in lower_error or "property" in lower_error or "attribute" in lower_error):
-            # Try to extract the missing item if possible for a more specific message
-            match = re.search(r"([\w\._]+)\s+(?:does not exist|not found)", lower_error) # Matches words, dots, underscores
-            item_name = f" '{match.group(1)}'" if match else ""
-            return (f"DoesNotExistError: The specified PLAXIS item{item_name} does not exist or could not be found. "
-                    "Verify names and ensure the item is defined in the model as expected.")
-        if "property not found" in lower_error or \
-           ("no attribute" in lower_error and "plxscripting" not in lower_error and "object has no attribute" not in lower_error) :
-            # Avoid misinterpreting Python's own AttributeError on internal script objects (like g_i itself being None)
-            # as a PLAXIS property error unless it's clearly from PLAXIS context.
-            return ("PropertyNotFound: A specified property of a PLAXIS object could not be accessed. "
-                    "Check if the property name is correct for the object type and PLAXIS version.")
-
-
-        # Calculation and Numerical Issues
-        if "calculation failed" in lower_error: # General calculation failure
-            return ("CalculationFailure: The PLAXIS calculation process failed. "
-                    "Review the calculation log within PLAXIS for specific details and error messages.")
-        if "convergence not reached" in lower_error or "did not converge" in lower_error:
-            return ("ConvergenceError: The analysis did not converge. This could be due to model instability, "
-                    "excessively large load steps, incorrect material parameters, mesh quality issues, or inadequate boundary conditions. "
-                    "Review calculation output and consider refining these aspects.")
-        if "numerical error" in lower_error or "singular matrix" in lower_error or "matrix is not positive definite" in lower_error:
-            return ("NumericalInstability: A numerical error occurred (e.g., singular or non-positive definite matrix). "
-                    "This often indicates model instability (e.g., insufficient support), incorrect boundary conditions, "
-                    "or extremely soft/problematic material properties. Check model setup thoroughly.")
-        if "soil body seems to collapse" in lower_error or "mechanism formed" in lower_error:
-            return ("ModelCollapse: The soil body appears to collapse, indicating a potential failure mechanism has formed. "
-                    "Review applied loads, soil strengths, and structural support conditions. The model may be overloaded or unstable.")
-        # Example of mapping specific PLAXIS error codes if they are known and documented
-        if "error code 101" in lower_error: # Often related to soil body collapse
-             return ("ErrorCode101 (Soil Body Collapse): PLAXIS detected a soil body collapse. "
-                     "Check applied loads, soil strength parameters, and boundary conditions.")
-        if "error code 25" in lower_error: # Often related to stiffness matrix issues
-            return ("ErrorCode25 (Stiffness Matrix Problem): PLAXIS encountered an issue with the stiffness matrix "
-                    "(possibly non-positive definite). Check material parameters (especially stiffness and Poisson's ratio), "
-                    "element quality, and boundary conditions.")
-        if "accuracy condition not met" in lower_error:
-            return ("AccuracyNotMet: The calculation could not satisfy the desired accuracy. "
-                    "This may be due to numerical difficulties, model instability, or very large deformations. "
-                    "Review model setup, load increments, and solver settings.")
-        if "load increment reduced to zero" in lower_error:
-            return ("LoadIncrementReducedToZero: The solver reduced the load increment to zero, indicating a failure to proceed. "
-                    "This often points to model instability or a failure mechanism. Check loads, strengths, and boundary conditions.")
-
-
-        # Meshing Issues
-        if "mesh generation failed" in lower_error or "error generating mesh" in lower_error:
-            return ("MeshingError: Mesh generation failed. Check geometry for inconsistencies (e.g., very small entities, "
-                    "short lines, acute angles, overlaps), or try adjusting global/local mesh coarseness settings.")
-        if "cannot generate mesh for region" in lower_error: # More specific meshing error
-            return ("MeshingRegionError: Mesh could not be generated for a specific region or volume. "
-                    "Inspect the geometry of that particular region for errors or try local mesh refinement/coarsening.")
-        if "geometric inconsistency" in lower_error or "invalid geometry" in lower_error:
-            return ("GeometricError: A geometric inconsistency or invalid geometry was detected. "
-                    "Run geometry checks in PLAXIS, look for overlaps, gaps, or very small features.")
-
-
-        # Input Parameter, Type, and Index Issues
-        if "parameter" in lower_error and ("missing" in lower_error or "invalid" in lower_error or "out of range" in lower_error):
-            param_name_match = re.search(r"parameter\s*['\"]?([^'\"\s]+)['\"]?", lower_error) # Try to find parameter name
-            param_info = f" for parameter '{param_name_match.group(1)}'" if param_name_match else ""
-            return (f"InvalidParameter: An input parameter{param_info} is missing, invalid, or out of its valid range. "
-                    "Please check your input values against PLAXIS documentation or requirements.")
-        if "type mismatch" in lower_error or "incorrect type" in lower_error:
-            return ("TypeMismatchError: A parameter of an incorrect data type was provided to a PLAXIS command. "
-                    "Ensure numbers are floats/integers as appropriate, and strings are correctly quoted if needed.")
-        if "index out of range" in lower_error or \
-           ("is not valid" in lower_error and "index" in lower_error): # Python's IndexError can also be caught by PlxScriptingError
-            return ("IndexError: An index used in a PLAXIS command (e.g., for phases, layers, materials list) "
-                    "is out of range or invalid for the current collection size.")
-
-        # File and License Issues
-        if "license" in lower_error or "dongle" in lower_error or "no valid license" in lower_error:
-            return "LicenseError: PLAXIS license issue detected. Ensure your license is active, accessible, and not expired."
-        if "file not found" in lower_error and ".p3dscript" not in lower_error : # Avoid matching the temp script file itself
-             return "FileNotFound: A specified PLAXIS project or input data file was not found. Check file paths and names."
-        if "cannot open file" in lower_error or ("access denied" in lower_error and "file" in lower_error):
-            return (f"FileAccessError: Cannot open or access a required file. Check file permissions and path. "
-                    f"Details from PLAXIS: {raw_error_message}")
-        if "disk space" in lower_error:
-            return ("DiskSpaceError: Insufficient disk space available for PLAXIS operations "
-                    "(e.g., saving project, temporary files during calculation). Free up disk space.")
-
-        # Mode Errors (e.g., trying to define geometry in calculation mode)
-        if "incorrect mode" in lower_error or "operation not allowed in current mode" in lower_error:
-            return ("IncorrectModeError: The attempted operation is not allowed in the current PLAXIS mode "
-                    "(e.g., trying to define soil properties in Structures mode). "
-                    "Ensure correct mode transitions (e.g., gotostructures, gotomesh, gotostages) are used in the script.")
-
-        # Timeout (usually from subprocess if CLI is used, but can be mapped here if error message contains "timeout")
-        if "timeout" in lower_error or "timed out" in lower_error:
-            return ("TimeoutError: The PLAXIS operation timed out. "
-                    "The process may be taking too long or has become unresponsive.")
-
-        # If the error is a PlxScriptingError but not specifically mapped, provide its type for some context
-        if "plxscripting" in str(type(raw_error_message)).lower(): # Check if it's an instance of PlxScriptingError or its string form
-             # This check is a bit indirect. Better if the original exception object is passed to this function.
-             # For now, if raw_error_message is the string form of a PlxScriptingError:
-             return f"PlxScriptingError: A PLAXIS scripting error occurred: {raw_error_message[:250]}" # Truncate for display
-
-
-        # Generic fallback if no specific pattern matched
-        brief_error = raw_error_message[:250] + ("..." if len(raw_error_message) > 250 else "") # Truncate long messages for UI
-        return (f"PlaxisUnhandledError: An unspecified PLAXIS error occurred. Details: {brief_error}. "
-                "Please check PLAXIS application logs or console output for more information if available.")
 
     def close_all_connections(self):
-        """
-        Closes PLAXIS API connections (by nullifying server/global objects)
-        and terminates any active CLI subprocess launched by this interactor.
-
-        Note: For `plxscripting.easy.new_server`, explicit closure of server objects (s_i, s_o)
-        is often not required as connections might be managed by Python's garbage collection
-        or by closing the PLAXIS application itself. Nullifying the objects here prevents further use.
-        """
-        print("Attempting to close all PLAXIS connections and processes...")
-
+        logger.info("Attempting to close all PLAXIS connections and processes...")
+        # For API connections, just nullify server objects. Actual server might keep running.
         if self.s_i or self.g_i:
-            print("Nullifying Input server objects (s_i, g_i). Actual server connection closure depends on plxscripting behavior and PLAXIS state.")
+            logger.info("Nullifying Input server objects (s_i, g_i).")
             self.s_i, self.g_i = None, None
         if self.s_o or self.g_o:
-            print("Nullifying Output server objects (s_o, g_o).")
+            logger.info("Nullifying Output server objects (s_o, g_o).")
             self.s_o, self.g_o = None, None
 
-        # If a CLI process was started and is still running
-        if self.plaxis_process and self.plaxis_process.poll() is None: # poll() is None if process is running
-            print("Terminating active PLAXIS CLI process...")
+        # For CLI process
+        if self.plaxis_process and self.plaxis_process.poll() is None: # Check if process is running
+            logger.info("Terminating active PLAXIS CLI process...")
             try:
-                self.plaxis_process.terminate() # Ask nicely first
-                self.plaxis_process.wait(timeout=5) # Wait a bit for graceful termination
-                print("PLAXIS CLI process terminated.")
-            except subprocess.TimeoutExpired:
-                print("PLAXIS CLI process did not terminate gracefully after 5s, attempting to kill.")
-                self.plaxis_process.kill() # Force kill
-                self.plaxis_process.wait() # Wait for kill to complete
-                print("PLAXIS CLI process killed.")
-            except Exception as e: # Other errors during termination
-                print(f"Error during PLAXIS CLI process termination: {e}")
-            self.plaxis_process = None # Clear the handle
-
-        self.use_api = False # Reset the API usage flag
-        print("PLAXIS connections and processes handled for closure by PlaxisInteractor.")
-
+                self.plaxis_process.terminate() # Graceful termination
+                try:
+                    self.plaxis_process.wait(timeout=5) # Wait for it to terminate
+                    logger.info("PLAXIS CLI process terminated gracefully.")
+                except subprocess.TimeoutExpired:
+                    logger.warning("PLAXIS CLI process did not terminate gracefully after 5s, attempting to kill.")
+                    self.plaxis_process.kill() # Force kill
+                    self.plaxis_process.wait() # Wait for kill
+                    logger.info("PLAXIS CLI process killed.")
+            except Exception as e: # Catch any error during termination/kill
+                logger.error(f"Error during PLAXIS CLI process termination: {e}", exc_info=True)
+            self.plaxis_process = None
+        logger.info("PLAXIS connections and processes handled for closure by PlaxisInteractor.")
 
 if __name__ == '__main__':
-    # This __main__ block is for conceptual testing and examples.
-    # It requires a running PLAXIS instance with the API server enabled.
-    # Replace "YOUR_API_PASSWORD" with your actual PLAXIS API password in MockProjectSettings.
-    print("\n--- Conceptual Test of PlaxisInteractor ---")
+    # Basic logging setup for __main__ testing
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logger.info("\n--- Conceptual Test of PlaxisInteractor (with Exception Handling) ---")
 
-    # Mock ProjectSettings for testing
-    # Inherit from the actual ProjectSettings if it has complex structure, or define attributes directly.
+    from dataclasses import dataclass # For MockAnalysisSettings
+
     class MockProjectSettings(ProjectSettings):
         def __init__(self, project_name: str,
                      api_input_port: int, api_output_port: int, api_password: str,
                      proj_file_path: Optional[str] = None,
                      plaxis_exe: Optional[str] = None):
-            # Call base __init__ if it exists and handles these, or set them directly.
-            # Assuming base ProjectSettings has at least project_name and plaxis_installation_path.
-            super().__init__(project_name=project_name, plaxis_installation_path=plaxis_exe)
+            super().__init__(project_name=project_name, plaxis_installation_path=plaxis_exe) # type: ignore
             self.plaxis_api_input_port = api_input_port
             self.plaxis_api_output_port = api_output_port
             self.plaxis_api_password = api_password
-            # Ensure project_file_path is an absolute path for consistency if used for saving/loading.
             self.project_file_path = os.path.abspath(proj_file_path if proj_file_path else f"{project_name}_test.p3dxml")
 
-            # Add other necessary attributes from the real ProjectSettings if methods use them.
-            # For example, if unit settings are used by setup_model_in_plaxis:
-            # self.units_system = "SI" # or some other enum/string
-            # self.units = {"length": "m", "force": "kN", "time": "day"} # Example structure
+            @dataclass
+            class MockAnalysisSettings: # Simple mock for analysis settings
+                max_calc_time_seconds: Optional[int] = 10 # Short timeout for testing
+            self.analysis_settings = MockAnalysisSettings()
 
-    # --- Configuration for the conceptual test ---
-    # !!! IMPORTANT: Replace "YOUR_API_PASSWORD" with your actual PLAXIS API password !!!
-    # !!! and ensure PLAXIS is running with the server enabled on these ports.      !!!
-    TEST_API_PASSWORD = "YOUR_API_PASSWORD"
-    # Path to a PLAXIS executable (optional, for CLI testing if it were implemented)
-    # TEST_PLAXIS_EXE_PATH = "C:/Program Files/Bentley/PLAXIS 3D CONNECT Edition V22/Plaxis3DInput.exe"
-    TEST_PLAXIS_EXE_PATH = None # Set to None to focus on API tests
 
-    test_proj_name = "InteractorApiConceptualTest"
-    # Define a temporary project file path for saving/loading tests.
-    # This file will be created in the current working directory.
-    test_file_path = os.path.join(os.getcwd(), f"{test_proj_name}.p3dxml") # Use .p3dxml or .p3d
+    TEST_API_PASSWORD = "testpassword" # Change if your PLAXIS API has a different password
+    TEST_PLAXIS_EXE_PATH = "C:/Program Files/Bentley/Geotechnical/PLAXIS 3D CONNECT Edition V22/Plaxis3DInput.exe" # Adjust if necessary
+
+    # Ensure TEST_PLAXIS_EXE_PATH is valid on your system if running CLI tests, otherwise set to None
+    if not os.path.exists(TEST_PLAXIS_EXE_PATH):
+        logger.warning(f"PLAXIS Executable path for testing does not exist: {TEST_PLAXIS_EXE_PATH}. CLI tests may fail or be skipped.")
+        TEST_PLAXIS_EXE_PATH = None # Prevents FileNotFoundError if path is wrong
+
+    test_proj_name = "InteractorExceptionTest"
+    test_file_path = os.path.join(os.getcwd(), f"{test_proj_name}.p3dxml")
 
     mock_settings = MockProjectSettings(
         project_name=test_proj_name,
-        api_input_port=10000,      # Default PLAXIS input port
-        api_output_port=10001,     # Default PLAXIS output port
+        api_input_port=10000, api_output_port=10001, # Standard ports
         api_password=TEST_API_PASSWORD,
         proj_file_path=test_file_path,
         plaxis_exe=TEST_PLAXIS_EXE_PATH
     )
-
-    # Initialize interactor
     interactor = PlaxisInteractor(plaxis_path=TEST_PLAXIS_EXE_PATH, project_settings=mock_settings)
 
-    print("\n--- Test 1: Input Server Connection ---")
-    if interactor._connect_to_input_server():
-        print("Input server connection: SUCCESS")
+    # --- Test API Connection Failure (example: wrong port or password) ---
+    logger.info("\n--- Test 1: API Input Connection Failure (simulated by potentially wrong password/port) ---")
+    # To truly test this, you might need to ensure PLAXIS API is NOT running or use a bad password
+    # For this conceptual test, we'll assume it might fail and catch the specific exception.
+    original_pass = mock_settings.plaxis_api_password
+    mock_settings.plaxis_api_password = "wrong_password_for_testing"
+    try:
+        interactor._connect_to_input_server()
+        logger.info("Input server connection: UNEXPECTED SUCCESS (was expecting failure with bad password)")
+    except PlaxisConnectionError as e:
+        logger.info(f"Input server connection: EXPECTED FAILURE - Caught PlaxisConnectionError: {e}")
+    except Exception as e:
+        logger.error(f"Input server connection: UNEXPECTED EXCEPTION TYPE - {type(e).__name__}: {e}", exc_info=True)
+    finally:
+        mock_settings.plaxis_api_password = original_pass # Reset password
 
-        print("\n--- Test 2: Model Setup (New Project via API) ---")
-        # Define some simple API callables (lambdas for brevity).
-        # These would normally come from builder modules (e.g., geometry_builder.py)
-        # and be constructed based on data from the frontend models.
-
-        def sample_model_creation_callables(g_i_instance: Any):
-            """Example callable demonstrating a few PLAXIS API commands."""
-            print("  Inside sample_model_creation_callables:")
-            print("    Executing: Create Material 'TestSand'")
-            # Create a material object. The exact parameters depend on the SoilModel chosen.
-            # SoilModel=1 is often Linear Elastic. Parameters like Eref, nu, gammaUnsat, gammaSat are common.
-            # It's crucial that these parameters are valid for the chosen SoilModel.
-            mat_sand = g_i_instance.soilmat()
-            g_i_instance.setproperties(mat_sand,
-                                       "MaterialName", "TestSand",
-                                       "SoilModel", 1, # Assuming 1 = Linear Elastic
-                                       "gammaUnsat", 18.0,
-                                       "gammaSat", 20.0,
-                                       "Eref", 30000.0, # Reference Young's modulus
-                                       "nu", 0.3)       # Poisson's ratio
-            print(f"    Material '{mat_sand.MaterialName.value}' created conceptually.")
-
-            print("    Executing: Create Borehole at (0,0,0)")
-            # Borehole creation often requires coordinates. For 3D, (x,y). z is handled by layers.
-            bh1 = g_i_instance.borehole(0,0)
-            print(f"    Borehole '{getattr(bh1, 'Name', 'UnnamedBorehole').value if hasattr(getattr(bh1, 'Name', ''), 'value') else 'UnnamedBorehole'}' created conceptually.")
-
-            print("    Executing: Add Soil Layer (10m thick) to Borehole")
-            # Adding a soil layer to a borehole. API varies:
-            # Option A: g_i.soillayer(borehole_object, top_level, bottom_level)
-            # Option B: borehole_object.addlayer(thickness)
-            # Option C: g_i.command(f"soillayer {bh1.Name.value} ...")
-            # Assuming Option A for this conceptual test with top at z=0, bottom at z=-10
-            g_i_instance.soillayer(bh1, 0, -10)
-            print("    Soil layer added conceptually.")
-
-            print(f"    Executing: Assign Material 'TestSand' to the first layer of the borehole.")
-            # Assigning material requires reference to the soil layer object within the borehole.
-            # This can be complex and depends on how PLAXIS names/indexes these objects.
-            # Example: g_i_instance.set(g_i_instance.Soils[0].SoilLayers[0].Material, mat_sand)
-            # Or, using the created borehole object:
-            #   layer_to_assign = bh1.Soils[0].SoilLayers[0] # Path might vary
-            #   g_i_instance.set(layer_to_assign.Material, mat_sand)
-            # This part is highly dependent on exact PLAXIS API and object model access.
-            # For a robust solution, one might need to query materials/layers by name after creation.
-            print("    Material assignment in test is conceptual due to object reference complexity. Skipped actual assignment API call.")
-
-        model_setup_cmds_for_new_project = [
-            lambda gi: gi.settitle(mock_settings.project_name + " - Automated by Interactor"), # Set title after g_i.new()
-            # sample_model_creation_callables, # This is more complex; use simpler for a quick API flow test
-            lambda gi: gi.circle(0,0,5) if hasattr(gi, 'circle') else print("   (Skipping gi.circle - not available on g_i mock/stub)") # Simple geometry
-        ]
-
-        if interactor.setup_model_in_plaxis(model_setup_cmds_for_new_project, is_new_project=True):
-            print("Model setup commands for new project executed: SUCCESS")
-            try:
-                if interactor.g_i: # Check if g_i is still valid
-                    title = interactor.g_i.Project.Title.value
-                    print(f"Verified project title from PLAXIS: {title}")
-                    if title != mock_settings.project_name + " - Automated by Interactor":
-                        print(f"ERROR: Title mismatch post-setup! Expected '{mock_settings.project_name + ' - Automated by Interactor'}', got '{title}'")
-            except Exception as e:
-                print(f"Error verifying title after setup: {e}")
-        else:
-            print("Model setup for new project: FAILED")
-
-        print("\n--- Test 3: Run Calculation (Conceptual - requires mesh, phases for real calculation) ---")
-        # Define a minimal conceptual calculation sequence. For a real run, these callables
-        # would come from calculation_builder.py and include actual meshing and phase definitions.
-        conceptual_calc_cmds = [
-            lambda gi: print("  Conceptual: Switch to mesh mode (e.g., gi.gotomesh())"),
-            lambda gi: print("  Conceptual: Generate default mesh (e.g., gi.mesh())"),
-            lambda gi: print("  Conceptual: Switch to staged construction (e.g., gi.gotostages())"),
-            # lambda gi: define_initial_phase_callable(gi), # Placeholder for actual phase definition
-            # lambda gi: define_loading_phase_callable(gi, load_object_ref, displacement_value), # Placeholder
-            lambda gi: print("  Conceptual: Trigger PLAXIS calculation (e.g., gi.calculate())"),
-        ]
-        # Actual calculation needs a fully defined and meshed model with phases.
-        # This test primarily verifies the interactor's flow for running commands and saving.
-        print("Skipping actual PLAXIS calculation execution as it requires full model setup. Testing command flow.")
-        # Pass an empty list for `calculation_run_callables` to avoid errors on an incomplete model,
-        # or pass conceptual_calc_cmds if the g_i mock/stub can handle print statements.
-        # For a true integration test, `conceptual_calc_cmds` would need to be replaced with
-        # callables that build a minimal, calculable PLAXIS model.
-        if interactor.run_calculation([]): # Pass empty list to just test the save logic flow
-            print("Calculation sequence (conceptually) and save attempt: SUCCESS (check console for save path)")
-        else:
-            print("Calculation sequence and/or save attempt: FAILED (or skipped if calc commands failed)")
-
-        print("\n--- Test 4: Open Existing Project (the one potentially saved by Test 3) ---")
-        # This test relies on project_file_path being correctly set (either initially or by run_calculation's save step).
-        if os.path.exists(mock_settings.project_file_path):
-            interactor.close_all_connections() # Close previous session before trying to open
-            print("Re-initializing interactor for opening the existing project...")
-            # Create a new interactor instance to ensure a fresh state for opening
-            interactor_for_opening = PlaxisInteractor(project_settings=mock_settings)
-
-            # Attempt to connect first, then setup_model_in_plaxis with is_new_project=False will try to open.
-            if interactor_for_opening._connect_to_input_server():
-                 # No additional model_setup_callables needed if just testing the open operation.
-                if interactor_for_opening.setup_model_in_plaxis([], is_new_project=False): # Empty list of callables
-                    print(f"Successfully opened existing project: {mock_settings.project_file_path}")
-                    try:
-                        if interactor_for_opening.g_i: # Check g_i
-                            title_opened = interactor_for_opening.g_i.Project.Title.value
-                            print(f"Title of opened project: {title_opened}")
-                    except Exception as e:
-                        print(f"Error reading title of opened project: {e}")
-                else:
-                    print(f"Failed to open existing project: {mock_settings.project_file_path}")
-                interactor_for_opening.close_all_connections() # Clean up this interactor instance
-            else:
-                print("Failed to connect to input server for 'Open Existing Project' test.")
-        else:
-            print(f"Skipping 'Open Existing Project' test: File '{mock_settings.project_file_path}' not found. "
-                  "(Was it successfully saved by the 'Run Calculation' test step?)")
-    else: # Initial input server connection failed
-        print("Input server connection: FAILED. Cannot proceed with most API-dependent tests.")
-
-    print("\n--- Test 5: Output Server Connection & Result Extraction (Conceptual) ---")
-    # This test requires a *calculated* PLAXIS project file.
-    # For this conceptual test, we'll use the same `test_file_path`. In a real scenario,
-    # this file should have actual results from a completed calculation.
-
-    if os.path.exists(test_file_path): # Check if the file (potentially created/saved earlier) exists
-        interactor_for_output = PlaxisInteractor(project_settings=mock_settings)
-        # _connect_to_output_server will attempt to open the file specified.
-        if interactor_for_output._connect_to_output_server(project_file_to_open=test_file_path):
-            print("Output server connection and project open for results: SUCCESS")
-
-            # Define conceptual result extraction callables.
-            # These would normally call methods in results_parser.py, which in turn use g_o.
-            def get_phase_count_callable(g_o_instance: Any) -> Dict[str, int]:
-                """Conceptual callable to count phases."""
-                if hasattr(g_o_instance, 'Phases') and g_o_instance.Phases is not None:
-                    return {"phase_count": len(g_o_instance.Phases)}
-                return {"phase_count": 0} # Default if Phases attribute isn't found or is None
-
-            results_callables_conceptual = [
-                get_phase_count_callable,
-                # lambda g_o_param: results_parser.parse_load_penetration_curve(g_o_param, ...), # Example
-            ]
-
-            extracted_results_list = interactor_for_output.extract_results(results_callables_conceptual)
-            if extracted_results_list: # Check if the list itself is not None and non-empty
-                print(f"Successfully executed result extraction callables. Number of result sets: {len(extracted_results_list)}")
-                for i, res_item in enumerate(extracted_results_list):
-                    print(f"  Result piece {i+1}: {res_item}")
-            else:
-                print("Result extraction: FAILED or returned no data/empty list.")
-            interactor_for_output.close_all_connections() # Clean up
-        else:
-            print(f"Output server connection or opening project '{test_file_path}' for results: FAILED.")
+    # --- Test CLI Execution Failure (example: bad script content or PLAXIS error) ---
+    if TEST_PLAXIS_EXE_PATH: # Only run if PLAXIS path is set
+        logger.info("\n--- Test 2: CLI Execution Failure (simulated with bad command) ---")
+        bad_cli_commands = ["this_is_not_a_plaxis_command()"]
+        try:
+            interactor._execute_cli_script(bad_cli_commands, "bad_script_test.p3dscript")
+            logger.info("CLI execution: UNEXPECTED SUCCESS (was expecting PlaxisCliError)")
+        except PlaxisCliError as e:
+            logger.info(f"CLI execution: EXPECTED FAILURE - Caught PlaxisCliError: {e}")
+        except PlaxisConfigurationError as e: # If path was bad
+             logger.info(f"CLI execution: EXPECTED CONFIG FAILURE - Caught PlaxisConfigurationError: {e}")
+        except Exception as e:
+            logger.error(f"CLI execution: UNEXPECTED EXCEPTION TYPE - {type(e).__name__}: {e}", exc_info=True)
     else:
-       print(f"Skipping output server/results test: Project file '{test_file_path}' not found.")
+        logger.warning("Skipping CLI execution failure test as PLAXIS executable path is not set.")
 
-    # Clean up dummy file if created by tests (optional, good for rerunnable tests)
-    # if os.path.exists(test_file_path) and "InteractorApiConceptualTest" in test_file_path : # Basic safety check
-    #     try:
-    #         os.remove(test_file_path)
-    #         print(f"Cleaned up test project file: {test_file_path}")
-    #     except OSError as e:
-    #         print(f"Error cleaning up test file '{test_file_path}': {e}")
+    # --- Test Full Workflow with Potential Error (e.g., during command execution) ---
+    # This requires a running PLAXIS instance. We simulate an error during API command execution.
+    logger.info("\n--- Test 3: Full API Workflow with Simulated Command Failure ---")
+
+    def failing_api_command(g_i_obj: Any):
+        logger.debug("Executing intentionally failing API command (e.g., referencing non-existent object).")
+        # This command is likely to fail if no object "NonExistentObject" exists.
+        g_i_obj.delete(g_i_obj.Points["NonExistentObject"])
+
+    faulty_setup_callables = [
+        lambda gi: gi.gotostructures(), # A valid command
+        failing_api_command             # An intentionally failing command
+    ]
+
+    # Assuming PLAXIS API is actually running for this test to make sense
+    # If not, the _connect_to_input_server will fail first.
+    did_setup_fail_as_expected = False
+    try:
+        # Reset interactor to clear any previous state
+        interactor = PlaxisInteractor(plaxis_path=TEST_PLAXIS_EXE_PATH, project_settings=mock_settings)
+        interactor.setup_model_in_plaxis(faulty_setup_callables, is_new_project=True)
+        logger.info("Full API workflow (setup_model_in_plaxis with faulty command): UNEXPECTED SUCCESS")
+    except PlaxisConfigurationError as e: # Could be this if the error is config-like (e.g. object not found)
+        logger.info(f"Full API workflow (setup_model_in_plaxis with faulty command): EXPECTED FAILURE - Caught PlaxisConfigurationError: {e}")
+        did_setup_fail_as_expected = True
+    except PlaxisAutomationError as e: # Generic catch for other automation errors
+        logger.info(f"Full API workflow (setup_model_in_plaxis with faulty command): EXPECTED FAILURE - Caught PlaxisAutomationError: {e}")
+        did_setup_fail_as_expected = True
+    except Exception as e:
+        logger.error(f"Full API workflow (setup_model_in_plaxis with faulty command): UNEXPECTED EXCEPTION TYPE - {type(e).__name__}: {e}", exc_info=True)
+
+    if not did_setup_fail_as_expected:
+        logger.warning("The setup_model_in_plaxis test with a faulty command did not fail as expected. "
+                       "This might happen if PLAXIS API is not running or if the 'failing_api_command' "
+                       "did not actually cause a PlxScriptingError (e.g., if it was caught internally by plxscripting).")
 
 
-    # Final closure for the main interactor instance used in early tests, if it was initialized.
     if 'interactor' in locals() and isinstance(interactor, PlaxisInteractor):
         interactor.close_all_connections()
-
-    print("\n--- Conceptual Test of PlaxisInteractor Finished ---")
-
-[end of src/backend/plaxis_interactor/interactor.py]
+    logger.info("\n--- Conceptual Test of PlaxisInteractor (with Exception Handling) Finished ---")
