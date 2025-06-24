@@ -4,23 +4,29 @@ PRD Ref: Category 4 (Frontend Development: UI Shell & Framework)
 """
 
 import sys
+import logging
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QVBoxLayout, QLabel,
-    QMenuBar, QToolBar, QStatusBar, QStackedWidget
+    QMenuBar, QToolBar, QStatusBar, QStackedWidget, QFileDialog,
+    QMessageBox, QPushButton, QGroupBox, QFormLayout, QLineEdit,
+    QHBoxLayout # Added QHBoxLayout for execution buttons
 )
-from PySide6.QtGui import QAction, QIcon # QIcon will be conceptual for now
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QAction, QIcon
+from PySide6.QtCore import Qt, QSize, Slot # Added Slot
 
 # Backend imports
-from backend.models import ProjectSettings, SpudcanGeometry, SoilLayer, MaterialProperties # Added Soil types
+from backend.models import ProjectSettings, SpudcanGeometry, SoilLayer, MaterialProperties, LoadingConditions, AnalysisControlParameters
 from backend.project_io import save_project, load_project
 
 # Frontend imports
 from .widgets.spudcan_geometry_widget import SpudcanGeometryWidget
 from .widgets.soil_stratigraphy_widget import SoilStratigraphyWidget
+from .widgets.loading_conditions_widget import LoadingConditionsWidget
+from .widgets.analysis_control_widget import AnalysisControlWidget
 
-# Qt Imports
-from PySide6.QtWidgets import QFileDialog, QLabel, QVBoxLayout, QWidget # Added some for clarity
+from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
     """
@@ -34,36 +40,76 @@ class MainWindow(QMainWindow):
         self.project_modified: bool = False
 
         self.setWindowTitle("Untitled Project - PLAXIS 3D Spudcan Automation Tool")
-        self.setGeometry(100, 100, 1200, 800) # x, y, width, height
+        self.setGeometry(100, 100, 1200, 800)
 
-        # Central Widget and Layout (Task 4.2, 4.4)
         self.central_widget = QWidget()
         self.main_layout = QVBoxLayout(self.central_widget)
         self.setCentralWidget(self.central_widget)
 
-        # Placeholder for different views/sections (Task 4.4)
+        project_info_group = QGroupBox("Project Information")
+        project_info_layout = QFormLayout(project_info_group)
+        self.project_name_display_label = QLabel("N/A")
+        project_info_layout.addRow(QLabel("Current Project:"), self.project_name_display_label)
+        self.job_number_input = QLineEdit()
+        self.job_number_input.textChanged.connect(lambda: self.mark_project_modified(True))
+        project_info_layout.addRow(QLabel("Job Number:"), self.job_number_input)
+        self.analyst_name_input = QLineEdit()
+        self.analyst_name_input.textChanged.connect(lambda: self.mark_project_modified(True))
+        project_info_layout.addRow(QLabel("Analyst Name:"), self.analyst_name_input)
+        self.main_layout.addWidget(project_info_group)
+
         self.view_stack = QStackedWidget()
-        self.main_layout.addWidget(self.view_stack)
+        self.main_layout.addWidget(self.view_stack, 1)
 
-        # Add a couple of placeholder pages to the stack
-        # self.page_input will now host more complex widgets
         self.page_input = QWidget()
-        self.page_input_layout = QVBoxLayout(self.page_input) # Main layout for all input sections
-        # self.page_input_layout.addWidget(QLabel("Input Parameters Section (Placeholder)")) # Remove old label
+        self.page_input_layout = QVBoxLayout(self.page_input)
 
-        # Instantiate and add SpudcanGeometryWidget to the input page
         self.spudcan_geometry_widget = SpudcanGeometryWidget()
         self.spudcan_geometry_widget.data_changed.connect(lambda: self.mark_project_modified(True))
         self.page_input_layout.addWidget(self.spudcan_geometry_widget)
 
-        # Instantiate and add SoilStratigraphyWidget to the input page
         self.soil_stratigraphy_widget = SoilStratigraphyWidget()
         self.soil_stratigraphy_widget.data_changed.connect(lambda: self.mark_project_modified(True))
         self.page_input_layout.addWidget(self.soil_stratigraphy_widget)
 
-        # TODO: Add other input section widgets here later (e.g., Loading, AnalysisControl)
-        self.page_input_layout.addStretch() # Pushes widgets to the top
+        self.loading_conditions_widget = LoadingConditionsWidget()
+        self.loading_conditions_widget.data_changed.connect(lambda: self.mark_project_modified(True))
+        self.page_input_layout.addWidget(self.loading_conditions_widget)
 
+        self.analysis_control_widget = AnalysisControlWidget()
+        self.analysis_control_widget.data_changed.connect(lambda: self.mark_project_modified(True))
+        self.page_input_layout.addWidget(self.analysis_control_widget)
+
+        execution_group_box = QGroupBox("Execution Controls")
+        execution_buttons_layout = QHBoxLayout() # Use QHBoxLayout for side-by-side buttons
+
+        self.run_analysis_button = QPushButton("Run Analysis")
+        self.run_analysis_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 6px; border-radius: 3px; font-weight: bold; }")
+        self.run_analysis_button.clicked.connect(self.on_run_analysis_clicked)
+        execution_buttons_layout.addWidget(self.run_analysis_button)
+
+        self.pause_analysis_button = QPushButton("Pause Analysis")
+        self.pause_analysis_button.setStyleSheet("QPushButton { background-color: #ff9800; color: white; padding: 6px; border-radius: 3px; }")
+        self.pause_analysis_button.clicked.connect(self.on_pause_analysis_clicked)
+        self.pause_analysis_button.setEnabled(False)
+        execution_buttons_layout.addWidget(self.pause_analysis_button)
+
+        self.resume_analysis_button = QPushButton("Resume Analysis")
+        self.resume_analysis_button.setStyleSheet("QPushButton { background-color: #2196F3; color: white; padding: 6px; border-radius: 3px; }")
+        self.resume_analysis_button.clicked.connect(self.on_resume_analysis_clicked)
+        self.resume_analysis_button.setEnabled(False)
+        execution_buttons_layout.addWidget(self.resume_analysis_button)
+
+        self.stop_analysis_button = QPushButton("Stop Analysis")
+        self.stop_analysis_button.setStyleSheet("QPushButton { background-color: #f44336; color: white; padding: 6px; border-radius: 3px; font-weight: bold; }") # Red
+        self.stop_analysis_button.clicked.connect(self.on_stop_analysis_clicked)
+        self.stop_analysis_button.setEnabled(False) # Disabled initially
+        execution_buttons_layout.addWidget(self.stop_analysis_button)
+
+        execution_group_box.setLayout(execution_buttons_layout)
+        self.page_input_layout.addWidget(execution_group_box)
+
+        self.page_input_layout.addStretch()
         self.view_stack.addWidget(self.page_input)
 
         self.page_results = QWidget()
@@ -71,76 +117,44 @@ class MainWindow(QMainWindow):
         self.page_results_layout.addWidget(QLabel("Results Display Section (Placeholder)"))
         self.view_stack.addWidget(self.page_results)
 
-        self.view_stack.setCurrentWidget(self.page_input) # Default to input page
+        self.view_stack.setCurrentWidget(self.page_input)
 
-        self._create_actions() # Helper for creating QAction objects
-        self._create_menu_bar() # Task 4.3
-        self._create_tool_bar() # Task 4.3 (Optional part)
+        self._create_actions()
+        self._create_menu_bar()
+        self._create_tool_bar()
         self._create_status_bar()
 
-        # Conceptual Styling (Task 4.6) - very basic example
-        # self.setStyleSheet("QMainWindow { background-color: #f0f0f0; }")
-        print("MainWindow initialized.")
+        self.on_new_project(prompt_save=False)
+        logger.info("MainWindow initialized.")
 
     def _create_actions(self):
-        """Create QAction objects for menus and toolbars."""
-        # File Actions
         self.action_new_project = QAction("&New Project", self)
-        self.action_new_project.setStatusTip("Create a new project")
-        self.action_new_project.triggered.connect(self.on_new_project)
-        # self.action_new_project.setIcon(QIcon(":/icons/new.png")) # Conceptual icon path
-
+        self.action_new_project.triggered.connect(lambda: self.on_new_project(prompt_save=True)) # Ensure prompt
         self.action_open_project = QAction("&Open Project...", self)
         self.action_open_project.setShortcut("Ctrl+O")
-        self.action_open_project.setStatusTip("Open an existing project")
         self.action_open_project.triggered.connect(self.on_open_project)
-
         self.action_save_project = QAction("&Save Project", self)
         self.action_save_project.setShortcut("Ctrl+S")
-        self.action_save_project.setStatusTip("Save the current project")
         self.action_save_project.triggered.connect(self.on_save_project)
-        self.action_save_project.setEnabled(False)
-
         self.action_save_project_as = QAction("Save Project &As...", self)
-        # self.action_save_project_as.setShortcut("Ctrl+Shift+S") # Common shortcut
-        self.action_save_project_as.setStatusTip("Save the current project under a new name")
         self.action_save_project_as.triggered.connect(self.on_save_project_as)
-        self.action_save_project_as.setEnabled(False) # Enable when there's a project
-
         self.action_settings = QAction("&Settings...", self)
-        self.action_settings.setStatusTip("Application settings")
         self.action_settings.triggered.connect(self.on_settings)
-
         self.action_exit = QAction("E&xit", self)
-        self.action_exit.setStatusTip("Exit the application")
-        self.action_exit.triggered.connect(self.close) # QMainWindow.close()
-
-        # Edit Actions (Placeholders)
-        self.action_undo = QAction("&Undo", self)
-        self.action_undo.setEnabled(False)
-        self.action_redo = QAction("&Redo", self)
-        self.action_redo.setEnabled(False)
-
-        # View Actions (Placeholders for navigation)
+        self.action_exit.triggered.connect(self.close)
         self.action_view_input = QAction("Input Section", self)
         self.action_view_input.setCheckable(True)
         self.action_view_input.setChecked(True)
         self.action_view_input.triggered.connect(lambda: self.view_stack.setCurrentWidget(self.page_input))
-
         self.action_view_results = QAction("Results Section", self)
         self.action_view_results.setCheckable(True)
         self.action_view_results.triggered.connect(lambda: self.view_stack.setCurrentWidget(self.page_results))
-
-        # Help Actions
         self.action_about = QAction("&About", self)
         self.action_about.triggered.connect(self.on_about)
-
+        self.mark_project_modified(False)
 
     def _create_menu_bar(self):
-        """Create the main menu bar."""
-        menu_bar = self.menuBar() # QMainWindow has one by default
-
-        # File Menu
+        menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("&File")
         file_menu.addAction(self.action_new_project)
         file_menu.addAction(self.action_open_project)
@@ -150,312 +164,251 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.action_settings)
         file_menu.addSeparator()
         file_menu.addAction(self.action_exit)
-
-        # Edit Menu (Placeholder)
-        edit_menu = menu_bar.addMenu("&Edit")
-        edit_menu.addAction(self.action_undo)
-        edit_menu.addAction(self.action_redo)
-
-        # View Menu (Placeholder for navigation)
         view_menu = menu_bar.addMenu("&View")
         view_menu.addAction(self.action_view_input)
         view_menu.addAction(self.action_view_results)
-        # In a more complex app, a QActionGroup would be good for mutually exclusive view actions.
-
-        # Help Menu
         help_menu = menu_bar.addMenu("&Help")
         help_menu.addAction(self.action_about)
 
-        print("Menu bar created.")
-
     def _create_tool_bar(self):
-        """Create a main toolbar."""
-        # For now, this is a very basic toolbar. Icons are conceptual.
-        # In a real app, you'd use QIcon.fromTheme or load from resource files.
-
         toolbar = QToolBar("Main Toolbar")
-        toolbar.setIconSize(QSize(24, 24)) # Example icon size
-        self.addToolBar(toolbar) # Add it to the QMainWindow
-
+        toolbar.setIconSize(QSize(24, 24))
+        self.addToolBar(toolbar)
         toolbar.addAction(self.action_new_project)
         toolbar.addAction(self.action_open_project)
         toolbar.addAction(self.action_save_project)
-        toolbar.addSeparator()
-        # Add other common actions if needed
-
-        print("Toolbar created (placeholder).")
 
     def _create_status_bar(self):
-        """Create a status bar."""
         self.statusBar = QStatusBar(self)
         self.setStatusBar(self.statusBar)
-        self.statusBar.showMessage("Ready", 3000) # Initial message, disappears after 3s
-        print("Status bar created.")
+        self.statusBar.showMessage("Ready", 3000)
 
-    # --- Placeholder Slot Methods for Actions ---
-    def on_new_project(self):
-        self.statusBar.showMessage("Action: New Project triggered", 2000)
-        print("Action: New Project")
-
-        # Optional: Check if current project is modified and prompt to save
-        if self.project_modified:
+    def on_new_project(self, prompt_save=True):
+        logger.info("Action: New Project")
+        if prompt_save and self.project_modified:
             ret = QMessageBox.question(self, "Unsaved Changes",
-                                       "The current project has unsaved changes. Do you want to save them before creating a new project?",
-                                       QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
-            if ret == QMessageBox.Save:
-                if not self.on_save_project(): # if save is cancelled, abort new project
-                    return
-            elif ret == QMessageBox.Cancel:
+                                       "Current project has unsaved changes. Save before creating a new one?",
+                                       QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+            if ret == QMessageBox.StandardButton.Save:
+                if not self.on_save_project(): return
+            elif ret == QMessageBox.StandardButton.Cancel:
                 return
 
         self.current_project_data = ProjectSettings()
         self.current_project_path = None
-        self.project_modified = False # A new, unmodified project
-
-        # TODO: Clear/reset all UI input fields to reflect the new project state
-        print("UI Cleared/Reset for New Project (Conceptual)")
-
+        self._update_ui_from_project_model()
+        self.mark_project_modified(False)
         self.update_window_title()
-        self.action_save_project.setEnabled(False) # Disabled until modified
-        self.action_save_project_as.setEnabled(True) # Can always "Save As" a new project
         self.statusBar.showMessage("New project created.", 3000)
 
-
     def on_open_project(self):
-        self.statusBar.showMessage("Action: Open Project triggered", 2000)
-        print("Action: Open Project")
-
-        # Optional: Check if current project is modified and prompt to save
+        logger.info("Action: Open Project")
         if self.project_modified:
-            ret = QMessageBox.question(self, "Unsaved Changes",
-                                       "The current project has unsaved changes. Do you want to save them before opening a new project?",
-                                       QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
-            if ret == QMessageBox.Save:
-                if not self.on_save_project(): # if save is cancelled, abort open
-                    return
-            elif ret == QMessageBox.Cancel:
+            ret = QMessageBox.question(self, "Unsaved Changes", "Save current project before opening another?",
+                                       QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+            if ret == QMessageBox.StandardButton.Save:
+                if not self.on_save_project(): return
+            elif ret == QMessageBox.StandardButton.Cancel:
                 return
 
-        file_dialog = QFileDialog(self, "Open Project", "", "PLAXIS Auto Project (*.plaxauto);;All Files (*)")
-        file_dialog.setAcceptMode(QFileDialog.AcceptOpen) # This is default for getOpenFileName but explicit
-
-        if file_dialog.exec():
-            filepath = file_dialog.selectedFiles()[0]
-            if filepath:
-                loaded_data = load_project(filepath)
-                if loaded_data:
-                    self.current_project_data = loaded_data
-                    self.current_project_path = filepath
-                    self.project_modified = False
-
-                    # TODO: Update all UI input fields from self.current_project_data
-                    self._update_ui_from_project_model() # Placeholder for actual UI update
-
-                    self.update_window_title()
-                    self.action_save_project.setEnabled(False) # Just loaded, not modified yet
-                    self.action_save_project_as.setEnabled(True) # Can always "Save As"
-                    self.statusBar.showMessage(f"Project '{filepath}' loaded successfully.", 3000)
-                else:
-                    QMessageBox.critical(self, "Load Error",
-                                         f"Failed to load project from {filepath}.\n"
-                                         "The file may be corrupted or not a valid project file.")
+        filepath, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "PLAXIS Auto Project (*.plaxauto);;All Files (*)")
+        if filepath:
+            loaded_data = load_project(filepath)
+            if loaded_data:
+                self.current_project_data = loaded_data
+                self.current_project_path = filepath
+                self._update_ui_from_project_model()
+                self.mark_project_modified(False)
+                self.update_window_title()
+                self.statusBar.showMessage(f"Project '{filepath}' loaded.", 3000)
+            else:
+                QMessageBox.critical(self, "Load Error", f"Failed to load project from {filepath}.")
         else:
             self.statusBar.showMessage("Open project cancelled.", 2000)
 
-
-    def on_save_project(self) -> bool: # Return bool to indicate success/failure/cancel
-        self.statusBar.showMessage("Action: Save Project triggered", 2000)
-        print("Action: Save Project")
+    def on_save_project(self) -> bool:
+        logger.info("Action: Save Project")
         if not self.current_project_data:
-            QMessageBox.warning(self, "No Project", "There is no project data to save.")
+            QMessageBox.warning(self, "No Project", "No data to save.")
             return False
-
-        if not self.current_project_path: # If no path, effectively "Save As"
+        if not self.current_project_path:
             return self.on_save_project_as()
         else:
-            # TODO: Gather data from UI into self.current_project_data
-            # For now, assume self.current_project_data is kept up-to-date by UI elements
-            print("Conceptual: Ensuring self.current_project_data is up-to-date from UI.")
-            self._gather_data_from_ui_to_project_model() # Placeholder for actual data gathering
-
-            success = save_project(self.current_project_data, self.current_project_path)
-            if success:
-                self.project_modified = False
-                self.action_save_project.setEnabled(False)
+            self._gather_data_from_ui_to_project_model()
+            if save_project(self.current_project_data, self.current_project_path):
+                self.mark_project_modified(False)
                 self.statusBar.showMessage(f"Project saved to {self.current_project_path}", 3000)
-                self.update_window_title()
                 return True
             else:
-                QMessageBox.critical(self, "Save Error",
-                                     f"Failed to save project to {self.current_project_path}.\n"
-                                     "Check file permissions or see logs for more details.")
+                QMessageBox.critical(self, "Save Error", f"Failed to save to {self.current_project_path}.")
                 return False
 
     def on_save_project_as(self) -> bool:
-        self.statusBar.showMessage("Action: Save Project As triggered", 2000)
-        print("Action: Save Project As")
+        logger.info("Action: Save Project As")
         if not self.current_project_data:
-            QMessageBox.warning(self, "No Project", "There is no project data to save.")
+            QMessageBox.warning(self, "No Project", "No data to save.")
             return False
+        self._gather_data_from_ui_to_project_model()
 
-        # TODO: Gather data from UI into self.current_project_data (if not already up-to-date)
-        print("Conceptual: Ensuring self.current_project_data is up-to-date from UI for Save As.")
-        self._gather_data_from_ui_to_project_model() # Placeholder
-
-        # Use QFileDialog to get save path
-        # Default directory could be user's documents or last used path
-        default_filename = self.current_project_data.project_name or "UntitledProject"
+        suggested_name = self.current_project_data.project_name or "UntitledProject"
         if self.current_project_path:
-            default_filename = self.current_project_path.split('/')[-1].split('\\')[-1]
+            suggested_name = self.current_project_path.split('/')[-1].split('\\')[-1]
 
-        file_dialog = QFileDialog(self, "Save Project As", "", "PLAXIS Auto Project (*.plaxauto);;All Files (*)")
-        file_dialog.setAcceptMode(QFileDialog.AcceptSave)
-        file_dialog.setDefaultSuffix("plaxauto")
-        file_dialog.selectFile(default_filename) # Suggest a filename
+        filepath, _ = QFileDialog.getSaveFileName(self, "Save Project As", suggested_name, "PLAXIS Auto Project (*.plaxauto);;All Files (*)")
+        if filepath:
+            self.current_project_path = filepath
+            if not self.current_project_data.project_name or self.current_project_data.project_name == "Untitled Project":
+                base_name = filepath.split('/')[-1].split('\\')[-1]
+                self.current_project_data.project_name = base_name.split('.')[0] if '.' in base_name else base_name
 
-        if file_dialog.exec():
-            new_path = file_dialog.selectedFiles()[0]
-            if new_path:
-                self.current_project_path = new_path
-                # Update project_name in data if it's still "Untitled Project" or to match filename
-                if self.current_project_data.project_name == "Untitled Project" or not self.current_project_data.project_name:
-                    base_name = new_path.split('/')[-1].split('\\')[-1]
-                    self.current_project_data.project_name = base_name.split('.')[0] if '.' in base_name else base_name
-
-                success = save_project(self.current_project_data, self.current_project_path)
-                if success:
-                    self.project_modified = False
-                    self.action_save_project.setEnabled(False) # Save is now up-to-date
-                    self.statusBar.showMessage(f"Project saved to {self.current_project_path}", 3000)
-                    self.update_window_title()
-                    return True
-                else:
-                    QMessageBox.critical(self, "Save Error",
-                                         f"Failed to save project to {self.current_project_path}.\n"
-                                         "Check file permissions or see logs for more details.")
-                    # self.current_project_path = None # Optionally reset path if save failed, or keep it for retry
-                    return False
-        return False # User cancelled Save As dialog
-
+            if save_project(self.current_project_data, self.current_project_path):
+                self.mark_project_modified(False)
+                self.update_window_title()
+                self.statusBar.showMessage(f"Project saved to {self.current_project_path}", 3000)
+                return True
+            else:
+                QMessageBox.critical(self, "Save Error", f"Failed to save to {self.current_project_path}.")
+                return False
+        return False
 
     def update_window_title(self):
         base_title = "PLAXIS 3D Spudcan Automation Tool"
         project_name_display = "Untitled Project"
-
         if self.current_project_path:
             project_name_display = self.current_project_path.split('/')[-1].split('\\')[-1]
-        elif self.current_project_data and self.current_project_data.project_name:
+        elif self.current_project_data and self.current_project_data.project_name not in [None, "Untitled Project"]:
              project_name_display = self.current_project_data.project_name
-
         modified_indicator = "*" if self.project_modified else ""
-
         self.setWindowTitle(f"{project_name_display}{modified_indicator} - {base_title}")
+        self.project_name_display_label.setText(project_name_display) # Update dedicated label too
 
-
-    # Placeholder for marking project as modified, should be called by UI input changes
     def _gather_data_from_ui_to_project_model(self):
-        """
-        Conceptual: This method will be responsible for collecting all data
-        from the UI input fields and updating self.current_project_data.
-        This needs to be called before saving.
-        """
         if not self.current_project_data:
-            self.current_project_data = ProjectSettings() # Should not happen if new/open logic is correct
+            self.current_project_data = ProjectSettings()
+            logger.warning("Gathering data but current_project_data was None. Initialized new.")
+        logger.info("Gathering data from UI fields into self.current_project_data model.")
 
-        print("Gathering data from UI fields into self.current_project_data model.")
+        spudcan_ui_data = self.spudcan_geometry_widget.gather_data()
+        self.current_project_data.spudcan.diameter = spudcan_ui_data.get('diameter')
+        self.current_project_data.spudcan.height_cone_angle = spudcan_ui_data.get('height_cone_angle')
 
-        # Gather from SpudcanGeometryWidget
-        if hasattr(self, 'spudcan_geometry_widget'):
-            spudcan_data_dict = self.spudcan_geometry_widget.gather_data()
-            self.current_project_data.spudcan = SpudcanGeometry(
-                diameter=spudcan_data_dict.get('diameter'),
-                height_cone_angle=spudcan_data_dict.get('height_cone_angle')
-                # spudcan_type will be handled if/when added to model and widget properly
-            )
-            print(f"Updated project_data.spudcan: {self.current_project_data.spudcan}")
+        soil_widget_data = self.soil_stratigraphy_widget.gather_data()
+        self.current_project_data.soil_stratigraphy = soil_widget_data.get("layers", [])
+        self.current_project_data.water_table_depth = soil_widget_data.get("water_table_depth")
 
-        # Gather from SoilStratigraphyWidget
-        if hasattr(self, 'soil_stratigraphy_widget'):
-            soil_layers_data_list_of_dicts = self.soil_stratigraphy_widget.gather_data()
-            self.current_project_data.soil_stratigraphy = [] # Clear existing
-            for layer_dict in soil_layers_data_list_of_dicts:
-                # Convert dict to SoilLayer and MaterialProperties model instances
-                mat_props = MaterialProperties(
-                    model_name=layer_dict.get("material", {}).get("model_name")
-                    # TODO: Add other material properties here when UI supports them
-                )
-                soil_layer = SoilLayer(
-                    name=layer_dict.get("name"),
-                    thickness=layer_dict.get("thickness"),
-                    material=mat_props
-                )
-                self.current_project_data.soil_stratigraphy.append(soil_layer)
-            print(f"Updated project_data.soil_stratigraphy with {len(self.current_project_data.soil_stratigraphy)} layers.")
+        loading_ui_data = self.loading_conditions_widget.gather_data()
+        self.current_project_data.loading.vertical_preload = loading_ui_data.get('vertical_preload')
+        self.current_project_data.loading.target_type = loading_ui_data.get('target_type')
+        self.current_project_data.loading.target_penetration_or_load = loading_ui_data.get('target_penetration_or_load')
 
-        # Example: Gather project name (if there was a dedicated field)
-        # if hasattr(self, 'project_name_input_field'):
-        #    self.current_project_data.project_name = self.project_name_input_field.text()
+        if hasattr(self, 'analysis_control_widget'):
+            gathered_analysis_data = self.analysis_control_widget.gather_data()
+            if not self.current_project_data.analysis_control:
+                self.current_project_data.analysis_control = AnalysisControlParameters()
+            ac = self.current_project_data.analysis_control
+            ac.meshing_global_coarseness = gathered_analysis_data.get("meshing_global_coarseness")
+            ac.meshing_refinement_spudcan = gathered_analysis_data.get("meshing_refinement_spudcan")
+            ac.initial_stress_method = gathered_analysis_data.get("initial_stress_method")
+            ac.MaxIterations = gathered_analysis_data.get("MaxIterations")
+            ac.ToleratedError = gathered_analysis_data.get("ToleratedError")
+            ac.ResetDispToZero = gathered_analysis_data.get("ResetDispToZero")
 
-        # ... and so on for all relevant UI fields / other input widgets.
+        self.current_project_data.job_number = self.job_number_input.text() or None
+        self.current_project_data.analyst_name = self.analyst_name_input.text() or None
 
-        # Update project name from path if it's still default and path exists
-        if (self.current_project_data.project_name == "Untitled Project" or \
-            not self.current_project_data.project_name) and self.current_project_path:
+        if (not self.current_project_data.project_name or \
+            self.current_project_data.project_name == "Untitled Project") and \
+            self.current_project_path:
              base_name = self.current_project_path.split('/')[-1].split('\\')[-1]
              self.current_project_data.project_name = base_name.split('.')[0] if '.' in base_name else base_name
+        logger.debug(f"Gathered project settings updated: {self.current_project_data.project_name}")
 
     def _update_ui_from_project_model(self):
-        """
-        Conceptual: This method will be responsible for populating all UI
-        input fields with data from self.current_project_data.
-        This needs to be called after loading a project or creating a new one (for defaults).
-        """
         if not self.current_project_data:
-            return # Should not happen
+            logger.warning("_update_ui_from_project_model called with no current_project_data. Resetting UI.")
+            self.spudcan_geometry_widget.load_data(None)
+            self.soil_stratigraphy_widget.load_data(None)
+            self.loading_conditions_widget.load_data(None)
+            if hasattr(self, 'analysis_control_widget'):
+                self.analysis_control_widget.load_data(None)
+            self.job_number_input.setText("")
+            self.analyst_name_input.setText("")
+            self.project_name_display_label.setText("N/A")
+            return
+        logger.info("Populating UI fields from self.current_project_data model.")
 
-        print("Populating UI fields from self.current_project_data model (Conceptual implementation).")
-        # Example:
-        # self.project_name_input.setText(self.current_project_data.project_name or "")
-        if hasattr(self, 'spudcan_geometry_widget') and self.current_project_data.spudcan:
-            self.spudcan_geometry_widget.load_data(self.current_project_data.spudcan)
+        self.spudcan_geometry_widget.load_data(self.current_project_data.spudcan)
+        self.soil_stratigraphy_widget.load_data(self.current_project_data)
+        self.loading_conditions_widget.load_data(self.current_project_data.loading)
+        if hasattr(self, 'analysis_control_widget'):
+           self.analysis_control_widget.load_data(self.current_project_data.analysis_control)
 
-        if hasattr(self, 'soil_stratigraphy_widget') and self.current_project_data.soil_stratigraphy is not None:
-            self.soil_stratigraphy_widget.load_data(self.current_project_data.soil_stratigraphy)
-        elif hasattr(self, 'soil_stratigraphy_widget'): # Ensure it's cleared if project_data.soil_stratigraphy is None
-             self.soil_stratigraphy_widget.load_data([])
-
+        self.job_number_input.setText(self.current_project_data.job_number or "")
+        self.analyst_name_input.setText(self.current_project_data.analyst_name or "")
+        self.project_name_display_label.setText(self.current_project_data.project_name or "Untitled Project")
 
     def mark_project_modified(self, modified_status: bool = True):
-        if not self.current_project_data: # Cannot mark modified if no project is loaded/newed
+        if not self.current_project_data:
+            self.action_save_project.setEnabled(False)
+            self.action_save_project_as.setEnabled(False)
+            if hasattr(self, 'run_analysis_button'): self.run_analysis_button.setEnabled(False)
+            if self.project_modified != False:
+                self.project_modified = False
+                self.update_window_title()
             return
 
-        # Only update if the status actually changes
-        # Also, ensure that there's actually a project to modify the status for.
-        # The save button should only be enabled if there's data AND it's modified.
         if self.project_modified != modified_status:
             self.project_modified = modified_status
-            can_save = self.project_modified and bool(self.current_project_data)
-            self.action_save_project.setEnabled(can_save)
-            self.update_window_title()
 
+        can_save = self.project_modified and bool(self.current_project_data)
+        self.action_save_project.setEnabled(can_save)
+        self.update_window_title()
 
-    def on_settings(self):
-    def mark_project_modified(self, modified_status: bool = True):
-        if self.project_modified != modified_status:
-            self.project_modified = modified_status
-            self.action_save_project.setEnabled(self.project_modified and bool(self.current_project_data))
-            self.update_window_title()
+        can_save_as_or_run = bool(self.current_project_data)
+        self.action_save_project_as.setEnabled(can_save_as_or_run)
+        if hasattr(self, 'run_analysis_button'): self.run_analysis_button.setEnabled(can_save_as_or_run)
 
+    def on_run_analysis_clicked(self):
+        logger.info("Run Analysis button clicked.")
+        if not self.current_project_data:
+            QMessageBox.warning(self, "No Project Data", "Please load or create a project before running analysis.")
+            return
+
+        self._gather_data_from_ui_to_project_model()
+
+        if not self.current_project_data.spudcan.diameter or \
+           not self.current_project_data.soil_stratigraphy:
+            QMessageBox.warning(self, "Incomplete Data", "Spudcan geometry and soil stratigraphy must be defined.")
+            return
+
+        logger.info(f"Attempting to run analysis with data: {self.current_project_data}")
+        self.statusBar.showMessage("Starting analysis (simulated)...", 0)
+
+        QMessageBox.information(self, "Analysis Simulation", "Analysis execution started (simulated).\n"
+                                "Backend call to PLAXIS would happen here.")
+        self.statusBar.showMessage("Analysis simulation finished.", 5000)
+
+    @Slot()
+    def on_pause_analysis_clicked(self):
+        logger.info("Pause Analysis button clicked (Not Implemented).")
+        QMessageBox.information(self, "Pause Analysis", "Pause/Resume feature is not yet implemented.")
+        # self.pause_analysis_button.setEnabled(False)
+        # self.resume_analysis_button.setEnabled(True)
+
+    @Slot()
+    def on_resume_analysis_clicked(self):
+        logger.info("Resume Analysis button clicked (Not Implemented).")
+        QMessageBox.information(self, "Resume Analysis", "Pause/Resume feature is not yet implemented.")
+        # self.pause_analysis_button.setEnabled(True)
+        # self.resume_analysis_button.setEnabled(False)
 
     def on_settings(self):
         self.statusBar.showMessage("Action: Settings triggered", 2000)
         print("Action: Settings")
-        # Logic to open a settings dialog will go here
 
     def on_about(self):
         self.statusBar.showMessage("Action: About triggered", 2000)
         print("Action: About")
-        # Logic to show an About dialog
         QMessageBox.about(
             self,
             "About PLAXIS Spudcan Automation Tool",
@@ -465,14 +418,13 @@ class MainWindow(QMainWindow):
             "<p>(Further details about licensing, authors, etc.)</p>"
         )
 
-# Need to import QMessageBox for on_about
 from PySide6.QtWidgets import QMessageBox
-from typing import Optional # For Python 3.8 compatibility with QWidget type hint
+from typing import Optional
 
 if __name__ == '__main__':
-    # This block is for testing MainWindow directly.
-    # In the actual application, main.py will run this.
     app = QApplication(sys.argv)
+    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG,
+                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     main_win = MainWindow()
     main_win.show()
     sys.exit(app.exec())

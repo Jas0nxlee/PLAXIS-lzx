@@ -103,7 +103,7 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** UI/UX Design Principles (6.1.4, 6.6.3).
     *   **Status:** Done (Basic `QStackedWidget` with placeholder pages in `MainWindow`).
 *   **4.5. Create Reusable UI Components/Widgets**
-    *   **Description:** Initial reusable widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`) created and integrated. Further components to be developed iteratively.
+    *   **Description:** Initial reusable widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`, `LoadingConditionsWidget`, `AnalysisControlWidget`) created and integrated. `MainWindow` now includes an "Execution" panel with a "Run Analysis" button. Further components to be developed iteratively.
     *   **PRD Ref:** UI/UX Design Principles (6.2, 6.3).
     *   **Status:** In Progress.
 *   **4.6. Implement Theme/Styling**
@@ -175,61 +175,61 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.1.2.2.3).
     *   **Status:** Not Started. (Likely part of `SoilStratigraphyWidget` or main input area)
 *   **6.2.6. UI for Soil Stratigraphy Visual Representation**
-    *   **Description:** Develop a simple visual representation of the soil layers and their thicknesses.
+    *   **Description:** Implemented `SoilStratigraphySchematicWidget` with `QPainter` to draw layers with proportional thickness, distinct colors (cycled or mapped from material ID), and text labels (name, material, thickness). A line with a symbol represents the water table. This schematic widget is integrated into `SoilStratigraphyWidget` and updates dynamically when layer data (add/remove/edit thickness/material) or water table depth changes.
     *   **PRD Ref:** Functional Requirements (4.1.2.2.4).
-    *   **Status:** Not Started. (Part of `SoilStratigraphyWidget`)
+    *   **Status:** Implemented.
 
 ### 6.3. Loading Conditions Input Section (PRD 4.1.2.3)
 
 *   **6.3.1. UI for Vertical Pre-load Input**
-    *   **Description:** Create an input field for the vertical pre-load on the spudcan.
+    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QDoubleSpinBox` for vertical pre-load. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.1).
-    *   **Status:** Not Started. (Requires new widget: `LoadingConditionsWidget`)
+    *   **Status:** Implemented.
 *   **6.3.2. UI for Target Penetration/Load Input**
-    *   **Description:** Create input fields for target penetration depth or target load for the analysis.
+    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QComboBox` to select target type (Penetration/Load) and a `QDoubleSpinBox` for the target value. Label and suffix for the spinbox update dynamically. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.2).
-    *   **Status:** Not Started. (Part of `LoadingConditionsWidget`)
+    *   **Status:** Implemented.
 *   **6.3.3. UI for Load Steps/Displacement Increments Input**
-    *   **Description:** Provide input fields for defining load steps or displacement increments if user control is required.
+    *   **Description:** Added a placeholder `QLineEdit` for "Number of Steps (Optional)" in `LoadingConditionsWidget`. Full implementation tying this to backend calculation parameters is pending, as PLAXIS typically handles this via calculation control.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.3).
-    *   **Status:** Not Started. (Part of `LoadingConditionsWidget`)
+    *   **Status:** Partially Implemented (UI placeholder created).
 
 ### 6.4. Analysis Control Parameters Input Section (PRD 4.1.2.4)
 
 *   **6.4.1. UI for Meshing Parameter Inputs**
-    *   **Description:** Create input fields or selection options for meshing parameters (e.g., global coarseness, refinement options), or use sensible defaults if simplified.
+    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for global coarseness and a `QCheckBox` for spudcan refinement. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.1).
-    *   **Status:** Not Started. (Requires new widget: `AnalysisControlWidget`)
+    *   **Status:** Implemented.
 *   **6.4.2. UI for Initial Stress Calculation Method Selection**
-    *   **Description:** Provide options (e.g., dropdown) for selecting the initial stress calculation method.
+    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for selecting the method. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.2).
-    *   **Status:** Not Started. (Part of `AnalysisControlWidget`)
+    *   **Status:** Implemented.
 *   **6.4.3. UI for Calculation Phase Configuration (Simplified)**
-    *   **Description:** Allow selection or confirmation of calculation phases as per the PDF workflow. This might be automated or offer limited user choices.
+    *   **Description:** UI for direct phase sequence manipulation not yet implemented. Current backend logic implies a fixed sequence. This task requires further clarification if user control over phases is needed beyond parameter adjustments.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.3).
-    *   **Status:** Not Started. (Part of `AnalysisControlWidget`)
+    *   **Status:** Not Started.
 *   **6.4.4. UI for Advanced Analysis Settings (Optional)**
-    *   **Description:** Input fields for tolerated error, max iterations if exposed to user, otherwise use PLAXIS defaults.
+    *   **Description:** Implemented basic inputs in `AnalysisControlWidget` for Max Iterations, Tolerated Error, and Reset Displacements to Zero. Integrated into `MainWindow`. More advanced parameters (MaxSteps, MaxStepsStored, etc.) can be added iteratively.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.4).
-    *   **Status:** Not Started. (Part of `AnalysisControlWidget`)
+    *   **Status:** Partially Implemented.
 
 ## 7. Frontend Development: Execution & Display Sections (PRD 4.1.3 - 4.1.6)
 
 ### 7.1. Execution Control Panel (PRD 4.1.3)
 
 *   **7.1.1. Implement Start/Run Analysis Button UI & Logic**
-    *   **Description:** Create the "Start/Run Analysis" button. Implement logic to trigger backend analysis execution. Disable button if required inputs are missing.
+    *   **Description:** "Run Analysis" button added to `MainWindow` within an "Execution" panel. Basic click logic gathers current project data and shows a simulation message. Button is enabled/disabled based on project data presence. Backend call is deferred.
     *   **PRD Ref:** Functional Requirements (4.1.3.1).
-    *   **Status:** Not Started.
+    *   **Status:** Partially Implemented (UI button and basic click logic created; backend call deferred).
     *   **Dependencies:** Backend PLAXIS interaction layer (Section 3).
 *   **7.1.2. Implement Pause/Resume Analysis Button UI & Logic (If Feasible)**
-    *   **Description:** Create "Pause/Resume" buttons. Implement logic to interface with backend if PLAXIS CLI/API supports this.
+    *   **Description:** "Pause Analysis" and "Resume Analysis" buttons added to `MainWindow` execution panel. Placeholder slots created. Buttons are initially disabled. Actual backend pause/resume logic is deferred.
     *   **PRD Ref:** Functional Requirements (4.1.3.2).
-    *   **Status:** Not Started.
+    *   **Status:** Partially Implemented (UI buttons created; backend logic deferred).
 *   **7.1.3. Implement Stop/Cancel Analysis Button UI & Logic**
-    *   **Description:** Create "Stop/Cancel" button. Implement logic to trigger backend process termination. Warn user about potential data loss.
+    *   **Description:** "Stop Analysis" button added to `MainWindow` execution panel with distinct styling. Placeholder slot created. Button is initially disabled. Actual backend stop logic is deferred.
     *   **PRD Ref:** Functional Requirements (4.1.3.3).
-    *   **Status:** Not Started.
+    *   **Status:** Partially Implemented (UI button created; backend logic deferred).
 
 ### 7.2. Execution Steps Display (PRD 4.1.4)
 
