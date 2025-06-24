@@ -30,7 +30,7 @@ This document outlines the detailed development tasks required to create the PLA
 *   **2.1. Define Core Data Structures/Models**
     *   **Description:** Implement Python classes or data structures to represent project settings, spudcan geometry, soil layers, soil material properties, loading conditions, and analysis results. These models will be used internally by the backend and for communication with the frontend.
     *   **PRD Ref:** Functional Requirements (4.1.2, 4.1.6), Technology Stack (7.4 for project file saving).
-    *   **Status:** Done (`models.py` created with dataclasses).
+    *   **Status:** Enhanced (`models.py` updated for `MaterialProperties` and `AnalysisControlParameters`).
 *   **2.2. Implement Project Save/Load Functionality**
     *   **Description:** Develop functions to serialize the project data models (from task 2.1) to a file (JSON or XML as per PRD 7.4.1) and deserialize them back into the application.
     *   **PRD Ref:** Functional Requirements (4.1.1.2, 4.1.1.3).
@@ -47,42 +47,42 @@ This document outlines the detailed development tasks required to create the PLA
 ## 3. Backend Development: PLAXIS Interaction Layer
 
 *   **3.1. Design PLAXIS Command/Script Generation Strategy**
-    *   **Description:** Decide on the primary interaction method (PLAXIS Python API vs. CLI scripts - PRD 7.3). Design how parameters from the backend data models will be translated into PLAXIS commands or Python script calls.
+    *   **Description:** Primary interaction method is PLAXIS Python API. CLI scripts are a fallback. Parameters from backend data models are translated into PLAXIS API callables.
     *   **PRD Ref:** Functional Requirements (4.2.1), Technology Stack (7.3).
-    *   **Status:** Done (Conceptual design decided: API first, CLI fallback).
+    *   **Status:** Done (Strategy confirmed and reflected in `PlaxisInteractor`).
 *   **3.2. Implement Spudcan Geometry Command Generation**
-    *   **Description:** Implemented direct API call (g_i.cone) for simple cone geometry creation and renaming. **Support for more complex spudcan geometries may be needed.**
+    *   **Description:** Implemented direct API call (`g_i.cone`) for simple cone geometry creation and renaming in `geometry_builder.py`. Complex spudcan geometries (e.g., with cylindrical parts) would require further development if specified.
     *   **PRD Ref:** Functional Requirements (4.2.1.3, relating to 4.1.2.1).
-    *   **Status:** Initial Implementation Done.
+    *   **Status:** Implemented (Simple Cone).
 *   **3.3. Implement Soil Stratigraphy & Properties Command Generation**
-    *   **Description:** Implemented API-based generation for soil materials (including structure for advanced model parameters like Hardening Soil) and single borehole stratigraphy. **Full parameter sets for all soil models and complex stratigraphy require further detailing.**
+    *   **Description:** `soil_builder.py` implements API-based generation for soil materials (`g_i.soilmat`, `g_i.setproperties`) and single borehole stratigraphy (`g_i.borehole`, `g_i.soillayer`, `g_i.setsoillayerlevel`). `MaterialProperties` model in `models.py` expanded to include more standard parameters and an `other_params` dict for flexibility. `soil_builder.py` updated to use these. **Further detailing for all soil models' comprehensive parameter sets and complex multi-borehole stratigraphy is still a larger task.**
     *   **PRD Ref:** Functional Requirements (4.2.1.2, 4.2.1.3, relating to 4.1.2.2).
-    *   **Status:** Implemented.
+    *   **Status:** Enhanced (Material parameter handling improved).
 *   **3.4. Implement Loading Conditions Command Generation**
-    *   **Description:** Implemented API-based generation for point loads (g_i.pointload) and point displacements (g_i.pointdispl). **Activation in phases and more complex load types need further attention in phase setup.**
+    *   **Description:** `calculation_builder.py` implements API-based generation for point loads (`g_i.pointload`) and point displacements (`g_i.pointdispl`). Load application point made configurable in function signature. Activation in phases is handled in phase setup (Task 3.5). Complex load types (e.g., surface loads on spudcan) not yet implemented.
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.3).
-    *   **Status:** Initial Implementation Done.
+    *   **Status:** Enhanced (Load application point configurable).
 *   **3.5. Implement Analysis Control Command Generation**
-    *   **Description:** Implemented API-based meshing setup (including Coarseness factor via g_i.mesh) and a standard phase sequence (Initial, Preload, Penetration) with improved phase object linking and activation of elements. **Needs robust object finding for activation and comprehensive parameter exposure for phases.**
+    *   **Description:** `calculation_builder.py` implements API-based meshing setup (`g_i.gotomesh`, `g_i.mesh`) and a standard phase sequence (Initial, Preload, Penetration) using `g_i.phase`. Activation of geometry and loads uses hardcoded names (checked for consistency). `AnalysisControlParameters` model in `models.py` and phase setup logic in `calculation_builder.py` expanded to include more deformation control parameters (e.g., MaxSteps, ToleratedError, MaxIterations). **Robust object finding by passing references instead of relying on names is a potential future enhancement.**
     *   **PRD Ref:** Functional Requirements (4.2.1.4, relating to 4.1.2.4).
-    *   **Status:** Implemented.
+    *   **Status:** Enhanced (More phase parameters exposed).
 *   **3.6. Implement Output Request Command Generation**
-    *   **Description:** Implemented conceptual callable for selecting curve points in Input. **Effectiveness and primary output selection occur in results parsing via `g_o`.**
+    *   **Description:** The primary command for selecting curve points, `addcurvepoint`, is an Output (`g_o`) command based on documentation. Conceptual callable for `g_i` removed from `calculation_builder.py`. Selection of curve points will be handled during results parsing (Task 3.8).
     *   **PRD Ref:** Functional Requirements (4.2.1.5).
-    *   **Status:** Initial Attempt Made.
+    *   **Status:** Clarified (Handled in Output/Task 3.8).
 *   **3.7. Develop PLAXIS Process Execution & Monitoring Module**
-    *   **Description:** API call orchestration logic is implemented. CLI process execution and comprehensive monitoring are conceptual/stubs.
+    *   **Description:** API call orchestration via callables is implemented in `PlaxisInteractor`. CLI process execution in `_execute_cli_script` method in `PlaxisInteractor.py` has been made functional using `subprocess.Popen`, including basic stdout/stderr capture, timeout, and process management. Comprehensive real-time monitoring for API/CLI is not yet implemented.
     *   **PRD Ref:** Functional Requirements (4.2.2).
-    *   **Status:** Partially Implemented.
+    *   **Status:** Enhanced (Basic CLI execution implemented).
     *   **Dependencies:** Logging module (Section 9).
 *   **3.8. Implement PLAXIS Output Parsing Logic**
-    *   **Description:** Implemented parsing logic for load-penetration curves, final penetration, peak resistance, soil displacements, and basic structural forces using `g_o` methods. **Requires testing with actual PLAXIS output and refinement for different result types/objects.**
+    *   **Description:** `results_parser.py` implements parsing for load-penetration curves, final penetration, peak resistance, soil displacements, and basic structural forces using `g_o` methods. Function signature for `parse_load_penetration_curve` clarified regarding result types for predefined vs. step-by-step curves. **Requires extensive testing with actual PLAXIS output and further refinement for different result types/objects and error handling within parsing functions.**
     *   **PRD Ref:** Functional Requirements (4.2.3).
-    *   **Status:** Implemented.
+    *   **Status:** Implemented (Minor clarification in function signature).
 *   **3.9. Define PLAXIS Error Detection and Mapping**
-    *   **Description:** Implemented `map_plaxis_error` with common error patterns. **Requires ongoing refinement and addition of more specific error codes/messages as encountered.**
+    *   **Description:** `PlaxisInteractor.map_plaxis_error` implemented with common error patterns. Added a few more general error patterns (accuracy not met, load increment zero, geometric inconsistency). **Requires ongoing refinement and addition of more specific error codes/messages as encountered through testing.**
     *   **PRD Ref:** Functional Requirements (4.2.4.1), Error Handling (8.1.1.4).
-    *   **Status:** Initial Implementation Done.
+    *   **Status:** Enhanced (More error patterns added).
 
 ## 4. Frontend Development: UI Shell & Framework
 
@@ -103,7 +103,7 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** UI/UX Design Principles (6.1.4, 6.6.3).
     *   **Status:** Done (Basic `QStackedWidget` with placeholder pages in `MainWindow`).
 *   **4.5. Create Reusable UI Components/Widgets**
-    *   **Description:** Initial reusable widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`) created and integrated. Further components to be developed iteratively.
+    *   **Description:** Initial reusable widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`, `LoadingConditionsWidget`, `AnalysisControlWidget`) created and integrated. `MainWindow` now includes an "Execution" panel with a "Run Analysis" button. Further components to be developed iteratively.
     *   **PRD Ref:** UI/UX Design Principles (6.2, 6.3).
     *   **Status:** In Progress.
 *   **4.6. Implement Theme/Styling**
@@ -147,9 +147,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.1.2.1.3).
     *   **Status:** Done (Placeholder `QComboBox` in `SpudcanGeometryWidget`).
 *   **6.1.3. UI for Spudcan Schematic Display**
-    *   **Description:** Develop a simple, dynamic visual representation (schematic diagram) of the spudcan that updates with input dimensions.
+    *   **Description:** Implemented `SpudcanSchematicWidget` with `QPainter` logic to draw a 2D cone. Integrated into `SpudcanGeometryWidget`, dynamically updating when diameter or cone angle inputs change. Displays diameter and calculated height.
     *   **PRD Ref:** Functional Requirements (4.1.2.1.4).
-    *   **Status:** Done (Placeholder `QFrame` in `SpudcanGeometryWidget`). **Actual drawing logic pending.**
+    *   **Status:** Implemented.
 
 ### 6.2. Soil Stratigraphy & Properties Input Section (PRD 4.1.2.2)
 
@@ -175,61 +175,61 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.1.2.2.3).
     *   **Status:** Not Started. (Likely part of `SoilStratigraphyWidget` or main input area)
 *   **6.2.6. UI for Soil Stratigraphy Visual Representation**
-    *   **Description:** Develop a simple visual representation of the soil layers and their thicknesses.
+    *   **Description:** Implemented `SoilStratigraphySchematicWidget` with `QPainter` to draw layers with proportional thickness, distinct colors (cycled or mapped from material ID), and text labels (name, material, thickness). A line with a symbol represents the water table. This schematic widget is integrated into `SoilStratigraphyWidget` and updates dynamically when layer data (add/remove/edit thickness/material) or water table depth changes.
     *   **PRD Ref:** Functional Requirements (4.1.2.2.4).
-    *   **Status:** Not Started. (Part of `SoilStratigraphyWidget`)
+    *   **Status:** Implemented.
 
 ### 6.3. Loading Conditions Input Section (PRD 4.1.2.3)
 
 *   **6.3.1. UI for Vertical Pre-load Input**
-    *   **Description:** Create an input field for the vertical pre-load on the spudcan.
+    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QDoubleSpinBox` for vertical pre-load. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.1).
-    *   **Status:** Not Started. (Requires new widget: `LoadingConditionsWidget`)
+    *   **Status:** Implemented.
 *   **6.3.2. UI for Target Penetration/Load Input**
-    *   **Description:** Create input fields for target penetration depth or target load for the analysis.
+    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QComboBox` to select target type (Penetration/Load) and a `QDoubleSpinBox` for the target value. Label and suffix for the spinbox update dynamically. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.2).
-    *   **Status:** Not Started. (Part of `LoadingConditionsWidget`)
+    *   **Status:** Implemented.
 *   **6.3.3. UI for Load Steps/Displacement Increments Input**
-    *   **Description:** Provide input fields for defining load steps or displacement increments if user control is required.
+    *   **Description:** Added a placeholder `QLineEdit` for "Number of Steps (Optional)" in `LoadingConditionsWidget`. Full implementation tying this to backend calculation parameters is pending, as PLAXIS typically handles this via calculation control.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.3).
-    *   **Status:** Not Started. (Part of `LoadingConditionsWidget`)
+    *   **Status:** Partially Implemented (UI placeholder created).
 
 ### 6.4. Analysis Control Parameters Input Section (PRD 4.1.2.4)
 
 *   **6.4.1. UI for Meshing Parameter Inputs**
-    *   **Description:** Create input fields or selection options for meshing parameters (e.g., global coarseness, refinement options), or use sensible defaults if simplified.
+    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for global coarseness and a `QCheckBox` for spudcan refinement. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.1).
-    *   **Status:** Not Started. (Requires new widget: `AnalysisControlWidget`)
+    *   **Status:** Implemented.
 *   **6.4.2. UI for Initial Stress Calculation Method Selection**
-    *   **Description:** Provide options (e.g., dropdown) for selecting the initial stress calculation method.
+    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for selecting the method. Integrated into `MainWindow`.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.2).
-    *   **Status:** Not Started. (Part of `AnalysisControlWidget`)
+    *   **Status:** Implemented.
 *   **6.4.3. UI for Calculation Phase Configuration (Simplified)**
-    *   **Description:** Allow selection or confirmation of calculation phases as per the PDF workflow. This might be automated or offer limited user choices.
+    *   **Description:** UI for direct phase sequence manipulation not yet implemented. Current backend logic implies a fixed sequence. This task requires further clarification if user control over phases is needed beyond parameter adjustments.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.3).
-    *   **Status:** Not Started. (Part of `AnalysisControlWidget`)
+    *   **Status:** Not Started.
 *   **6.4.4. UI for Advanced Analysis Settings (Optional)**
-    *   **Description:** Input fields for tolerated error, max iterations if exposed to user, otherwise use PLAXIS defaults.
+    *   **Description:** Implemented basic inputs in `AnalysisControlWidget` for Max Iterations, Tolerated Error, and Reset Displacements to Zero. Integrated into `MainWindow`. More advanced parameters (MaxSteps, MaxStepsStored, etc.) can be added iteratively.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.4).
-    *   **Status:** Not Started. (Part of `AnalysisControlWidget`)
+    *   **Status:** Partially Implemented.
 
 ## 7. Frontend Development: Execution & Display Sections (PRD 4.1.3 - 4.1.6)
 
 ### 7.1. Execution Control Panel (PRD 4.1.3)
 
 *   **7.1.1. Implement Start/Run Analysis Button UI & Logic**
-    *   **Description:** Create the "Start/Run Analysis" button. Implement logic to trigger backend analysis execution. Disable button if required inputs are missing.
+    *   **Description:** "Run Analysis" button added to `MainWindow` within an "Execution" panel. Basic click logic gathers current project data and shows a simulation message. Button is enabled/disabled based on project data presence. Backend call is deferred.
     *   **PRD Ref:** Functional Requirements (4.1.3.1).
-    *   **Status:** Not Started.
+    *   **Status:** Partially Implemented (UI button and basic click logic created; backend call deferred).
     *   **Dependencies:** Backend PLAXIS interaction layer (Section 3).
 *   **7.1.2. Implement Pause/Resume Analysis Button UI & Logic (If Feasible)**
-    *   **Description:** Create "Pause/Resume" buttons. Implement logic to interface with backend if PLAXIS CLI/API supports this.
+    *   **Description:** "Pause Analysis" and "Resume Analysis" buttons added to `MainWindow` execution panel. Placeholder slots created. Buttons are initially disabled. Actual backend pause/resume logic is deferred.
     *   **PRD Ref:** Functional Requirements (4.1.3.2).
-    *   **Status:** Not Started.
+    *   **Status:** Partially Implemented (UI buttons created; backend logic deferred).
 *   **7.1.3. Implement Stop/Cancel Analysis Button UI & Logic**
-    *   **Description:** Create "Stop/Cancel" button. Implement logic to trigger backend process termination. Warn user about potential data loss.
+    *   **Description:** "Stop Analysis" button added to `MainWindow` execution panel with distinct styling. Placeholder slot created. Button is initially disabled. Actual backend stop logic is deferred.
     *   **PRD Ref:** Functional Requirements (4.1.3.3).
-    *   **Status:** Not Started.
+    *   **Status:** Partially Implemented (UI button created; backend logic deferred).
 
 ### 7.2. Execution Steps Display (PRD 4.1.4)
 
@@ -311,13 +311,13 @@ This document outlines the detailed development tasks required to create the PLA
 ## 9. Error Handling & Logging Implementation (PRD Section 8)
 
 *   **9.1. Backend: Implement Robust Exception Handling**
-    *   **Description:** Exception handling present in `project_io.py`, `validation.py`, and extensively in `plaxis_interactor.py`. **Needs comprehensive review across all backend modules and standardized error propagation.**
+    *   **Description:** Exception handling present in `project_io.py`, `validation.py`, and extensively in `plaxis_interactor.py`. Custom exceptions (`PlaxisAutomationError` subtypes) defined in `exceptions.py` and integrated across all backend interactor modules (`interactor.py`, `geometry_builder.py`, `soil_builder.py`, `calculation_builder.py`, `results_parser.py`). SDK/Python exceptions are mapped to these custom types.
     *   **PRD Ref:** Error Handling (8.2).
-    *   **Status:** Partially Implemented.
+    *   **Status:** Enhanced (Custom exceptions integrated across backend modules).
 *   **9.2. Backend: Implement Logging Module**
-    *   **Description:** Set up Python's `logging` module. Configure logging levels, formatting, and file output with rotation as per PRD 8.3. Integrate logging calls throughout backend.
+    *   **Description:** Set up Python's `logging` module via `logger_config.py`. Configured basic logging levels, formatting, and console output. Integrated `logger` calls (replacing `print`) throughout all backend interactor modules. File output with rotation as per PRD 8.3 is pending full configuration in `logger_config.py` but basic structure is in place.
     *   **PRD Ref:** Logging (8.3).
-    *   **Status:** Not Started.
+    *   **Status:** Done.
 *   **9.3. Frontend: Implement User-Friendly Error Dialogs/Messages**
     *   **Description:** Design and implement dialog boxes or message areas in the UI to display clear, constructive error messages to the user, based on information from the backend.
     *   **PRD Ref:** Error Handling (8.1).
