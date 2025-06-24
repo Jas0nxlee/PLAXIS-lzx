@@ -207,7 +207,7 @@ This document outlines the detailed development tasks required to create the PLA
 *   **6.4.3. UI for Calculation Phase Configuration (Simplified)**
     *   **Description:** UI for direct phase sequence manipulation not yet implemented. Current backend logic implies a fixed sequence. This task requires further clarification if user control over phases is needed beyond parameter adjustments.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.3).
-    *   **Status:** Deferred (Current fixed backend sequence assumed sufficient for now).
+    *   **Status:** Deferred. (Current fixed backend sequence assumed sufficient for now)
 *   **6.4.4. UI for Advanced Analysis Settings (Optional)**
     *   **Description:** Implemented basic inputs in `AnalysisControlWidget` for Max Iterations, Tolerated Error, Reset Displacements to Zero. Also added UI for Max Calculation Steps (`MaxSteps`) and Min Iterations (`MinIterations`). `MaxStepsStored` was also added to this widget (addressed under task 6.3.3). Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.4).
@@ -330,7 +330,7 @@ This document outlines the detailed development tasks required to create the PLA
 *   **9.5. Frontend: UI for Log Access (Optional)**
     *   **Description:** If PRD 8.3.3.3 (easy log access) or 8.3.4 (UI log display) is implemented, create the necessary UI elements.
     *   **PRD Ref:** Logging (8.3.3.3, 8.3.4).
-    *   **Status:** Not Started.
+    *   **Status:** Implemented (Added "Open Log File Location" button).
 
 ## 10. Testing
 
@@ -369,7 +369,7 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Maintainability (5.4.2).
     *   **Status:** Enhanced.
 *   **11.3. Document Frontend Code (Comments)**
-    *   **Description:** Reviewed and enhanced docstrings/comments for key frontend modules: `main_window.py`, `spudcan_geometry_widget.py`, `loading_conditions_widget.py`, `analysis_control_widget.py`.
+    *   **Description:** Reviewed and enhanced docstrings/comments for key frontend modules: `main_window.py`, `spudcan_geometry_widget.py`, `loading_conditions_widget.py`, `analysis_control_widget.py`, `settings_dialog.py`, `mpl_widget.py`.
     *   **PRD Ref:** Maintainability (5.4.2).
     *   **Status:** Enhanced.
 *   **11.4. Create Developer Documentation (Optional but Recommended)**

@@ -297,10 +297,12 @@ def test_setup_model_with_command_failure(mock_plaxis_servers, basic_project_set
 
 # Test CLI execution path (if plaxis_path is provided)
 # This requires mocking subprocess.Popen
-@patch('backend.plaxis_interactor.interactor.open', new_callable=MagicMock) # Mock open globally for this test
+@patch('backend.plaxis_interactor.interactor.os.path.exists')
+@patch('backend.plaxis_interactor.interactor.open', new_callable=MagicMock)
 @patch('backend.plaxis_interactor.interactor.subprocess.Popen')
-def test_execute_cli_script_success(mock_subproc_popen, mock_open_func, basic_project_settings):
+def test_execute_cli_script_success(mock_subproc_popen, mock_open_func, mock_os_path_exists, basic_project_settings):
     # Configure the mock Popen object
+    mock_os_path_exists.return_value = True # Ensure the mock path is seen as existing
     mock_proc = MagicMock()
     mock_proc.communicate.return_value = ('stdout output', '') # No stderr for clean success
     mock_proc.returncode = 0
@@ -335,9 +337,11 @@ def test_execute_cli_script_success(mock_subproc_popen, mock_open_func, basic_pr
 
 
 # Test CLI execution path failure
-@patch('backend.plaxis_interactor.interactor.open', new_callable=MagicMock) # Mock open here too
+@patch('backend.plaxis_interactor.interactor.os.path.exists')
+@patch('backend.plaxis_interactor.interactor.open', new_callable=MagicMock)
 @patch('backend.plaxis_interactor.interactor.subprocess.Popen')
-def test_execute_cli_script_failure(mock_subproc_popen, basic_project_settings):
+def test_execute_cli_script_failure(mock_subproc_popen, mock_open_func, mock_os_path_exists, basic_project_settings):
+    mock_os_path_exists.return_value = True # Ensure the mock path is seen as existing for this test too
     mock_proc = MagicMock()
     mock_proc.communicate.return_value = ('stdout output', 'CLI ERROR XYZ')
     mock_proc.returncode = 1 # Simulate failure
@@ -350,10 +354,11 @@ def test_execute_cli_script_failure(mock_subproc_popen, basic_project_settings):
         interactor._execute_cli_script(test_commands)
 
     # Ensure script file is cleaned up if created (it might be, depending on where Popen fails)
-    script_filename = "temp_plaxis_script.p3dscript"
-    abs_script_path = os.path.abspath(script_filename)
-    if os.path.exists(abs_script_path):
-        os.remove(abs_script_path)
+        # script_filename = "temp_plaxis_script.p3dscript" # Default name used by interactor
+        # abs_script_path = os.path.abspath(script_filename)
+        # No need to remove if open is mocked, as it won't be created on disk by the interactor.
+        # The interactor's own finally block will attempt os.remove, which is fine.
+        pass # No cleanup needed here for the script file due to mocking 'open'
 
 # Need to import subprocess for the Popen mock assertions
 import subprocess
