@@ -59,10 +59,11 @@ class LoadingConditionsWidget(QWidget):
         # This is simplified for now. PLAXIS handles this through calculation control parameters (MaxStepsStored etc.)
         # or specific load function definitions which are more complex.
         # For a basic UI, we might just note that this is controlled elsewhere or add a simple "Number of Steps" if desired.
-        self.num_steps_lineedit = QLineEdit() # Placeholder, could be QSpinBox
-        self.num_steps_lineedit.setPlaceholderText("e.g., 100 or (PLAXIS Default)")
-        self.num_steps_lineedit.textChanged.connect(self.on_data_changed)
-        form_layout.addRow(QLabel("Number of Steps (Optional):"), self.num_steps_lineedit)
+        # self.num_steps_lineedit = QLineEdit() # Placeholder, could be QSpinBox
+        # self.num_steps_lineedit.setPlaceholderText("e.g., 100 or (PLAXIS Default)")
+        # self.num_steps_lineedit.textChanged.connect(self.on_data_changed)
+        # form_layout.addRow(QLabel("Number of Steps (Optional):"), self.num_steps_lineedit)
+        # This field will be moved to AnalysisControlWidget as MaxStepsStored.
 
         logger.info("LoadingConditionsWidget initialized.")
 
@@ -90,7 +91,7 @@ class LoadingConditionsWidget(QWidget):
         self.preload_spinbox.blockSignals(True)
         self.target_type_combo.blockSignals(True)
         self.target_value_spinbox.blockSignals(True)
-        self.num_steps_lineedit.blockSignals(True)
+        # self.num_steps_lineedit.blockSignals(True) # Removed
 
         if loading_data:
             self.preload_spinbox.setValue(getattr(loading_data, 'vertical_preload', 0.0))
@@ -109,19 +110,19 @@ class LoadingConditionsWidget(QWidget):
             # num_steps is not directly in LoadingConditions model, might be in AnalysisControlParameters
             # For now, this is a placeholder UI element.
             # self.num_steps_lineedit.setText(str(getattr(loading_data, 'number_of_steps', '')))
-            self.num_steps_lineedit.setText("") # Reset placeholder
+            # self.num_steps_lineedit.setText("") # Reset placeholder # Removed
 
         else: # Reset to defaults
             self.preload_spinbox.setValue(0.0)
             self.target_type_combo.setCurrentIndex(0)
             self.on_target_type_changed(self.target_type_combo.currentText())
             self.target_value_spinbox.setValue(1.0)
-            self.num_steps_lineedit.setText("")
+            # self.num_steps_lineedit.setText("") # Removed
 
         self.preload_spinbox.blockSignals(False)
         self.target_type_combo.blockSignals(False)
         self.target_value_spinbox.blockSignals(False)
-        self.num_steps_lineedit.blockSignals(False)
+        # self.num_steps_lineedit.blockSignals(False) # Removed
         self.data_changed.emit() # Emit once after all updates
 
     def gather_data(self) -> Dict[str, Any]: # Placeholder, should return LoadingConditions

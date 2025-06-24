@@ -67,17 +67,40 @@ def generate_material_callables(material_model: MaterialProperties) -> List[Call
 
         if material_model.eInit is not None: props_to_set["eInit"] = material_model.eInit
 
-        if material_model.Eref is not None: props_to_set["ERef"] = material_model.Eref
-        if material_model.nu is not None: props_to_set["nu"] = material_model.nu
-        if material_model.cRef is not None: props_to_set["cRef"] = material_model.cRef
-        if material_model.phi is not None: props_to_set["phi"] = material_model.phi
-        if material_model.psi is not None: props_to_set["psi"] = material_model.psi
+        if material_model.Eref is not None: props_to_set["ERef"] = material_model.Eref # Common, mapped
+        if material_model.nu is not None: props_to_set["nu"] = material_model.nu # Common
+        if material_model.cRef is not None: props_to_set["cRef"] = material_model.cRef # Common
+        if material_model.phi is not None: props_to_set["phi"] = material_model.phi # Common
+        if material_model.psi is not None: props_to_set["psi"] = material_model.psi # Common
 
+        # Hardening Soil specific parameters - map to typical PLAXIS API names
+        if material_model.E50ref is not None: props_to_set["E50Ref"] = material_model.E50ref
+        if material_model.Eoedref is not None: props_to_set["EoedRef"] = material_model.Eoedref
+        if material_model.Eurref is not None: props_to_set["EurRef"] = material_model.Eurref # Common mapping EurRef or EURRef
+        if material_model.m is not None: props_to_set["m"] = material_model.m
+        if material_model.pRef is not None: props_to_set["pRef"] = material_model.pRef # often p_ref or pref
+        if material_model.K0NC is not None: props_to_set["K0NC"] = material_model.K0NC
+        if material_model.Rf is not None: props_to_set["Rf"] = material_model.Rf
+        # 'nu' for HS is often nu_ur, handled by the common 'nu' for now.
+
+        # Soft Soil specific parameters - map to typical PLAXIS API names
+        if material_model.lambda_star is not None: props_to_set["lambda*"] = material_model.lambda_star # PLAXIS uses lambda*
+        if material_model.kappa_star is not None: props_to_set["kappa*"] = material_model.kappa_star   # PLAXIS uses kappa*
+        # SoftSoil also uses cRef, phi, psi, nu which are covered by common properties.
+
+        # Always process other_params last so they can override if specific model params are also put there by mistake
         if material_model.other_params:
             for key, value in material_model.other_params.items():
                 if value is not None:
-                    props_to_set[key] = value
-            logger.debug(f"  Including {len(material_model.other_params)} parameters from other_params for '{sanitized_mat_name}'.")
+                    # Basic check to avoid overwriting already set standard/known params if key matches case-insensitively
+                    # and the standard param was already set from a direct attribute.
+                    # This is a simple safeguard; more robust handling might involve a predefined list of "standard" keys.
+                    already_set_keys_lower = {k.lower() for k in props_to_set.keys()}
+                    if key.lower() not in already_set_keys_lower or props_to_set.get(key) is None : # Allow override if standard was None
+                        props_to_set[key] = value
+                    elif props_to_set.get(key) != value : # If standard was set and other_params has different value
+                        logger.warning(f"  Parameter '{key}' from other_params conflicts with a direct attribute for '{sanitized_mat_name}'. Using direct attribute's value.")
+            logger.debug(f"  Processed other_params for '{sanitized_mat_name}'.")
 
         params_flat = []
         for key, value in props_to_set.items():

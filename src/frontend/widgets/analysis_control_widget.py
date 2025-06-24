@@ -81,7 +81,28 @@ class AnalysisControlWidget(QWidget):
         self.reset_displacements_checkbox.stateChanged.connect(self.on_data_changed)
         form_layout.addRow(self.reset_displacements_checkbox)
 
-        # TODO: Add more advanced parameters as needed: MaxSteps, MaxStepsStored, MinIterations etc.
+        self.max_steps_stored_spinbox = QSpinBox()
+        self.max_steps_stored_spinbox.setRange(1, 10000) # PLAXIS default usually "all steps" or a high number
+        self.max_steps_stored_spinbox.setValue(250) # A reasonable default, PLAXIS default is MaxSteps
+        self.max_steps_stored_spinbox.setToolTip("Maximum number of calculation steps to store for results/curves. Default in PLAXIS is all steps of the phase.")
+        self.max_steps_stored_spinbox.valueChanged.connect(self.on_data_changed)
+        form_layout.addRow(QLabel("Number of Stored Output Steps:"), self.max_steps_stored_spinbox)
+
+        self.max_calc_steps_spinbox = QSpinBox()
+        self.max_calc_steps_spinbox.setRange(10, 100000) # Max calculation steps
+        self.max_calc_steps_spinbox.setValue(1000) # A sensible default, PLAXIS default might be higher or phase-dependent
+        self.max_calc_steps_spinbox.setToolTip("Maximum calculation steps per phase (e.g., for Deform.MaxSteps).")
+        self.max_calc_steps_spinbox.valueChanged.connect(self.on_data_changed)
+        form_layout.addRow(QLabel("Max Calculation Steps:"), self.max_calc_steps_spinbox)
+
+        self.min_iterations_spinbox = QSpinBox()
+        self.min_iterations_spinbox.setRange(1, 100)
+        self.min_iterations_spinbox.setValue(10) # PLAXIS default might be lower
+        self.min_iterations_spinbox.setToolTip("Desired minimum iterations per calculation step.")
+        self.min_iterations_spinbox.valueChanged.connect(self.on_data_changed)
+        form_layout.addRow(QLabel("Min Iterations:"), self.min_iterations_spinbox)
+
+        # TODO: Add more advanced parameters as needed.
 
         logger.info("AnalysisControlWidget initialized.")
 
@@ -102,6 +123,9 @@ class AnalysisControlWidget(QWidget):
         self.max_iterations_spinbox.blockSignals(True)
         self.tolerated_error_spinbox.blockSignals(True)
         self.reset_displacements_checkbox.blockSignals(True)
+        self.max_steps_stored_spinbox.blockSignals(True)
+        self.max_calc_steps_spinbox.blockSignals(True)
+        self.min_iterations_spinbox.blockSignals(True)
 
         if analysis_control_data:
             self.mesh_coarseness_combo.setCurrentText(getattr(analysis_control_data, 'meshing_global_coarseness', "Medium"))
@@ -110,6 +134,9 @@ class AnalysisControlWidget(QWidget):
             self.max_iterations_spinbox.setValue(getattr(analysis_control_data, 'MaxIterations', 100))
             self.tolerated_error_spinbox.setValue(getattr(analysis_control_data, 'ToleratedError', 0.01))
             self.reset_displacements_checkbox.setChecked(getattr(analysis_control_data, 'ResetDispToZero', False))
+            self.max_steps_stored_spinbox.setValue(getattr(analysis_control_data, 'MaxStepsStored', 250))
+            self.max_calc_steps_spinbox.setValue(getattr(analysis_control_data, 'MaxSteps', 1000))
+            self.min_iterations_spinbox.setValue(getattr(analysis_control_data, 'MinIterations', 10))
         else: # Reset to defaults
             self.mesh_coarseness_combo.setCurrentText("Medium")
             self.refine_spudcan_checkbox.setChecked(False)
@@ -117,6 +144,9 @@ class AnalysisControlWidget(QWidget):
             self.max_iterations_spinbox.setValue(100)
             self.tolerated_error_spinbox.setValue(0.01)
             self.reset_displacements_checkbox.setChecked(False)
+            self.max_steps_stored_spinbox.setValue(250)
+            self.max_calc_steps_spinbox.setValue(1000)
+            self.min_iterations_spinbox.setValue(10)
 
         self.mesh_coarseness_combo.blockSignals(False)
         self.refine_spudcan_checkbox.blockSignals(False)
@@ -124,6 +154,9 @@ class AnalysisControlWidget(QWidget):
         self.max_iterations_spinbox.blockSignals(False)
         self.tolerated_error_spinbox.blockSignals(False)
         self.reset_displacements_checkbox.blockSignals(False)
+        self.max_steps_stored_spinbox.blockSignals(False)
+        self.max_calc_steps_spinbox.blockSignals(False)
+        self.min_iterations_spinbox.blockSignals(False)
         self.data_changed.emit() # Emit once after all updates
 
     def gather_data(self) -> Dict[str, Any]: # Placeholder, should return AnalysisControlParameters
@@ -135,6 +168,9 @@ class AnalysisControlWidget(QWidget):
             "MaxIterations": self.max_iterations_spinbox.value(),
             "ToleratedError": self.tolerated_error_spinbox.value(),
             "ResetDispToZero": self.reset_displacements_checkbox.isChecked(),
+            "MaxStepsStored": self.max_steps_stored_spinbox.value(),
+            "MaxSteps": self.max_calc_steps_spinbox.value(),
+            "MinIterations": self.min_iterations_spinbox.value(),
             # Add other parameters as they are implemented in the UI
         }
         logger.debug(f"AnalysisControlWidget: Gathered data - {data}")
