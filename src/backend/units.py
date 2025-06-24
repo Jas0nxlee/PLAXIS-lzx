@@ -35,42 +35,58 @@ BASE_UNITS = {
     # Add other systems if/when supported
 }
 
-# Store the currently active unit system for the project.
-# This would ideally be part of the ProjectSettings model from models.py
-# For now, a global placeholder.
-# In a real app, this should be managed more robustly, perhaps via a config object or context.
-_current_project_unit_system: UnitSystem = UnitSystem.SI
+# The global state for unit system is removed.
+# The application should fetch the current unit system from settings when needed.
+# from frontend.settings_dialog import SettingsDialog # Avoid direct frontend import in backend logic
 
-def get_current_unit_system() -> UnitSystem:
-    """Returns the currently active unit system for the project."""
-    # In a real app, this would fetch from project settings.
-    return _current_project_unit_system
+# It's better if the part of the code needing the unit system setting
+# calls SettingsDialog.get_units_system() directly, or it's passed down.
 
-def set_current_unit_system(system: UnitSystem):
-    """Sets the active unit system for the project."""
-    # In a real app, this would update project settings and might trigger UI updates.
-    global _current_project_unit_system
-    if not isinstance(system, UnitSystem):
-        raise ValueError("Invalid unit system specified.")
-    _current_project_unit_system = system
-    print(f"Project unit system set to: {system.value}")
+def get_configured_unit_system() -> UnitSystem:
+    """
+    Returns the unit system configured in the application settings.
+    This function acts as a placeholder for where the actual settings lookup would occur.
+    For direct use in backend logic, the setting should ideally be passed
+    from the frontend or a shared configuration component.
+    """
+    # This is a conceptual link. In a real scenario, avoid direct UI import here.
+    # The SettingsDialog.get_units_system() would be called by a higher-level
+    # controller or the main application instance and the value passed down.
+    # For now, we'll simulate this by trying to import and call if possible,
+    # but it's not ideal for true backend/frontend separation.
+    try:
+        # Attempt to dynamically import for loose coupling, not recommended for production
+        from frontend.settings_dialog import SettingsDialog # type: ignore
+        system_str = SettingsDialog.get_units_system()
+        return UnitSystem(system_str)
+    except (ImportError, ValueError) as e:
+        # print(f"Warning: Could not retrieve unit system from SettingsDialog ({e}). Defaulting to SI.")
+        return UnitSystem.SI
 
 
-def get_unit_label(quantity: str, system: Optional[UnitSystem] = None) -> str:
+def get_unit_label(quantity: str, system_str: Optional[str] = None) -> str:
     """
     Returns the appropriate unit label for a given physical quantity and unit system.
 
     Args:
         quantity: The physical quantity (e.g., "length", "pressure").
-        system: The unit system. If None, uses the current project unit system.
+        system_str: The string identifier of the unit system (e.g., "SI").
+                    If None, uses the globally configured unit system.
 
     Returns:
         The unit label string (e.g., "m", "kPa"). Returns empty string if not found.
     """
-    if system is None:
-        system = get_current_unit_system()
+    target_system_enum: UnitSystem
+    if system_str is None:
+        target_system_enum = get_configured_unit_system()
+    else:
+        try:
+            target_system_enum = UnitSystem(system_str)
+        except ValueError:
+            # print(f"Warning: Invalid system_str '{system_str}' in get_unit_label. Defaulting to SI.")
+            target_system_enum = UnitSystem.SI
 
-    return BASE_UNITS.get(system, {}).get(quantity, "")
+    return BASE_UNITS.get(target_system_enum, {}).get(quantity, "")
 
 
 # Placeholder for conversion functions.
@@ -117,18 +133,18 @@ def ensure_consistent_input_units(value: float, expected_unit_for_plaxis: str, u
     that directly map to PLAXIS, simplifying this.
     If the UI allows input in different units, this function would be crucial.
     """
-    current_system = get_current_unit_system()
-    # For now, assume user_provided_unit matches current_system's unit for that quantity type
+    configured_system = get_configured_unit_system()
+    # For now, assume user_provided_unit matches configured_system's unit for that quantity type
     # and expected_unit_for_plaxis is also from that same system, or PLAXIS uses SI directly.
 
     # If the application strictly uses SI for PLAXIS interaction:
-    if current_system == UnitSystem.SI and expected_unit_for_plaxis.lower() in ["m", "kn", "kpa"]: # etc.
-        # Assume value is already in SI if current_system is SI
+    if configured_system == UnitSystem.SI and expected_unit_for_plaxis.lower() in ["m", "kn", "kpa"]: # etc.
+        # Assume value is already in SI if configured_system is SI
         # This logic needs to be more robust based on actual UI input flexibility
         return value
 
     # More complex logic would be:
-    # 1. Determine the type of quantity (e.g. length, pressure)
+    # 1. Determine the type of quantity (e.g., length, pressure)
     # 2. Get the base unit for that quantity in the current_project_unit_system
     # 3. If user_provided_unit is different from base unit, convert value to base unit.
     # 4. Then convert from base unit to expected_unit_for_plaxis.
@@ -138,19 +154,31 @@ def ensure_consistent_input_units(value: float, expected_unit_for_plaxis: str, u
 
 
 if __name__ == '__main__':
-    print("--- Testing Unit System Utilities ---")
+    # Note: The direct import of SettingsDialog in get_configured_unit_system
+    # makes standalone testing of this script tricky without a QApplication instance
+    # and proper QSettings setup. For true unit tests, this dependency would be mocked.
+    print("--- Testing Unit System Utilities (Conceptual - Relies on SettingsDialog) ---")
 
-    print(f"Default project unit system: {get_current_unit_system()}")
+    # To properly test get_configured_unit_system, you'd typically mock SettingsDialog.get_units_system
+    # For this __main__ block, we'll assume it might work if run in an environment where Qt can init.
+    try:
+        from PySide6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() # Get existing instance if any
+        if not app: # Create a new one if not
+            # For QSettings to work without full app name/org in test:
+            QApplication.setOrganizationName("MySoftTest")
+            QApplication.setApplicationName("PlaxisAutomatorTest")
+            app = QApplication(sys.argv)
 
-    print(f"Length unit in SI: {get_unit_label('length', UnitSystem.SI)}")
-    print(f"Pressure unit in SI: {get_unit_label('pressure')}") # Uses current default
+        print(f"Configured unit system (from settings): {get_configured_unit_system().value}")
+    except Exception as e:
+        print(f"Could not initialize QApplication for test settings: {e}")
+        print(f"Configured unit system (defaulting due to error): {get_configured_unit_system().value}")
 
-    # Example of setting a different system (if it were defined)
-    # set_current_unit_system(UnitSystem.IMPERIAL_FT_KIP) # Assuming this enum existed
-    # print(f"Length unit in Imperial: {get_unit_label('length', UnitSystem.IMPERIAL_FT_KIP)}")
 
-    # Reset to SI for other tests
-    set_current_unit_system(UnitSystem.SI)
+    print(f"Length unit in SI: {get_unit_label('length', 'SI')}")
+    print(f"Pressure unit using configured system: {get_unit_label('pressure')}")
 
     # Test conversion stubs
     pressure_kpa = 100.0

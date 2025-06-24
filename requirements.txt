@@ -9,4 +9,4 @@ openpyxl
 
 # Add other core dependencies as they are identified, e.g.:
 # numpy (if heavy numerical work is done outside PLAXIS)
-# matplotlib (if generating plots in Python backend/frontend - PRD 7.4.2)
+matplotlib # For generating plots (PRD 7.4.2)

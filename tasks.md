@@ -270,23 +270,24 @@ This document outlines the detailed development tasks required to create the PLA
     *   **Status:** Implemented.
     *   **Dependencies:** Backend output parsing (3.8) (Note: `results_parser.compile_analysis_results` needs full implementation).
 *   **7.4.2. UI for Graphical Display (Load-Penetration Curve)**
-    *   **Description:** Implement a chart/plot widget (e.g., using Matplotlib integration with PyQt, or a native Qt chart) to display the Load-Penetration curve.
+        *   **Description:** Implemented `MplWidget` using Matplotlib and integrated it into the results tab of `MainWindow`. The `_update_results_display` method now attempts to plot data from `AnalysisResults.load_penetration_curve_data`.
     *   **PRD Ref:** Functional Requirements (4.1.6.2).
-    *   **Status:** Deferred.
-    *   **Dependencies:** Backend output parsing (3.8).
+        *   **Status:** Implemented.
+        *   **Dependencies:** Backend output parsing (3.8) must provide correctly structured `load_penetration_curve_data` in `AnalysisResults`.
 *   **7.4.3. UI for Optional Contour Plot Display (If Feasible)**
     *   **Description:** If PLAXIS can export simple contour images, implement a way to display these.
     *   **PRD Ref:** Functional Requirements (4.1.6.2).
     *   **Status:** Deferred.
 *   **7.4.4. UI for Tabular Data Output**
-    *   **Description:** Implement a table widget to display detailed results (load, displacement, etc.) in a tabular format.
+        *   **Description:** Added a `QTableWidget` to the results tab in `MainWindow`. The `_update_results_display` method now populates this table with load and penetration data, similar to the plot.
     *   **PRD Ref:** Functional Requirements (4.1.6.3).
-    *   **Status:** Deferred.
+        *   **Status:** Implemented.
+        *   **Dependencies:** Backend output parsing (3.8) must provide correctly structured `load_penetration_curve_data`.
 *   **7.4.5. Implement Export Results Functionality (Plots, CSV/Excel)**
-    *   **Description:** Add buttons/menu items to export plots as images and tabular data as CSV or Excel files. Interface with backend or use frontend libraries.
+        *   **Description:** Added "Export Plot as Image" and "Export Table Data as CSV" buttons to the results page in `MainWindow`. Implemented `on_export_plot` to save Matplotlib figure (PNG, JPG, SVG, PDF) and `on_export_table_data` to save QTableWidget content as CSV, both using `QFileDialog`.
     *   **PRD Ref:** Functional Requirements (4.1.6.4).
-    *   **Status:** Deferred.
-    *   **Dependencies:** Data handling libraries (Pandas, Openpyxl - PRD 7.4.2).
+        *   **Status:** Implemented.
+        *   **Dependencies:** Matplotlib for plot export. `AnalysisResults` for data.
 *   **7.4.6. Implement Simple PDF Report Generation (Optional)**
     *   **Description:** If included, develop logic to generate a basic PDF report summarizing inputs and key results.
     *   **PRD Ref:** Functional Requirements (4.1.6.4).
@@ -391,3 +392,5 @@ This document outlines the detailed development tasks required to create the PLA
     *   **Status:** Not Started.
 
 This detailed task list should provide a solid foundation for planning and executing the development of the PLAXIS 3D Spudcan Penetration Automation tool.
+
+[end of tasks.md]
