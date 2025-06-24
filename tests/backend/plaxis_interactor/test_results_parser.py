@@ -197,8 +197,10 @@ def test_get_standard_results_commands_and_compile():
     assert len(result_callables) == 2 # Curve and Final Penetration
 
     raw_data = []
+    # The callables now expect (g_o, g_i). We pass None for g_i as its usage is conceptual.
+    mock_g_i_for_test = None
     for func in result_callables:
-        raw_data.append(func(mock_g_o))
+        raw_data.append(func(mock_g_o, mock_g_i_for_test))
 
     assert len(raw_data) == 2
     # raw_data[0] is curve, raw_data[1] is final penetration

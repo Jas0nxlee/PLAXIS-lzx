@@ -16,50 +16,47 @@ except ImportError:
 logger = logging.getLogger(__name__) # Added logger instance
 
 def parse_load_penetration_curve(g_o: Any,
+                                 g_i: Optional[Any] = None, # Optional Input global object
                                  target_phase_name: Optional[str] = None, # If None, try last phase
                                  # For predefined curves:
                                  predefined_curve_name: Optional[str] = None,
-                                 # ResultTypes for X and Y axes of the predefined PLAXIS curve
-                                 # These might be different from components used for step-by-step construction.
-                                 # e.g. g_o.ResultTypes.SumMstage for displacement, g_o.ResultTypes.SumFstage_Z for force
                                  curve_x_axis_result_type: Optional[Any] = None,
                                  curve_y_axis_result_type: Optional[Any] = None,
-                                 # For step-by-step construction if predefined_curve_name is not used/found:
+                                 # For step-by-step construction:
                                  spudcan_ref_node_coords: Optional[Tuple[float, float, float]] = None,
-                                 spudcan_ref_object_name: Optional[str] = None,
-                                 # ResultTypes for individual displacement and load components of the spudcan object/node
-                                 step_disp_component_result_type: Optional[Any] = None, # e.g., g_o.ResultTypes.RigidBody.Uy
-                                 step_load_component_result_type: Optional[Any] = None  # e.g., g_o.ResultTypes.RigidBody.Fz
+                                 # Input object reference (name or actual plx object) for get_equivalent
+                                 input_spudcan_ref: Optional[Any] = None,
+                                 # Fallback if input_spudcan_ref not provided or get_equivalent fails
+                                 spudcan_output_object_name: Optional[str] = None,
+                                 step_disp_component_result_type: Optional[Any] = None,
+                                 step_load_component_result_type: Optional[Any] = None
                                  ) -> List[Dict[str, float]]:
     """
     Parses the load-penetration curve from PLAXIS output.
-
     Priority:
-    1. If `predefined_curve_name` and its axis ResultTypes (`curve_x_axis_result_type`, `curve_y_axis_result_type`)
-       are provided, attempts to use `g_o.getcurveresults`.
-    2. If that fails or is not applicable, and if `spudcan_ref_object_name` and its component ResultTypes
-       (`step_disp_component_result_type`, `step_load_component_result_type`) are provided,
-       attempts to construct the curve step-by-step using `g_o.getresults`.
-    3. If that also fails or is not applicable, and if `spudcan_ref_node_coords` and its component ResultTypes
-       are provided, this part is currently a STUB and would need implementation for step-by-step node results.
+    1. Predefined curve using `g_o.getcurveresults`.
+    2. Step-by-step from object:
+        a. Try finding output object using `g_i.get_equivalent(input_spudcan_ref, g_o)`.
+        b. Fallback to `spudcan_output_object_name` if (a) fails or `g_i`/`input_spudcan_ref` not provided.
+    3. Step-by-step from node coordinates (STUB).
 
     Args:
         g_o: The PLAXIS output global object.
-        target_phase_name: The name of the calculation phase. If None, uses the last phase.
-
-        predefined_curve_name: Name of a curve object predefined in PLAXIS (e.g., via `addcurvepoint` in Output).
-        curve_x_axis_result_type: PLAXIS ResultType for the X-axis of the `predefined_curve_name`.
-                                  This is CRITICAL for `getcurveresults` to function correctly.
-        curve_y_axis_result_type: PLAXIS ResultType for the Y-axis of the `predefined_curve_name`.
-                                  This is CRITICAL for `getcurveresults` to function correctly.
-
-        spudcan_ref_node_coords: Coordinates (x,y,z) of a reference node on the spudcan for step-by-step.
-        spudcan_ref_object_name: Name of a reference object (e.g., RigidBody, Plate) for step-by-step results.
-        step_disp_component_result_type: PLAXIS ResultType for the spudcan's displacement component for step-by-step.
-        step_load_component_result_type: PLAXIS ResultType for the spudcan's load/reaction component for step-by-step.
-
+        g_i: Optional PLAXIS input global object (for get_equivalent).
+        target_phase_name: Name of the calculation phase (default: last phase).
+        predefined_curve_name: Name of a predefined curve in PLAXIS Output.
+        curve_x_axis_result_type: ResultType for X-axis of predefined curve.
+        curve_y_axis_result_type: ResultType for Y-axis of predefined curve.
+        spudcan_ref_node_coords: Coordinates (x,y,z) of a reference node.
+        input_spudcan_ref: Reference to the spudcan object in the PLAXIS Input model
+                           (e.g., name or g_i object like g_i.RigidBodies['Spudcan_RB']).
+                           Used with g_i.get_equivalent(input_spudcan_ref, g_o).
+        spudcan_output_object_name: Fallback name of the reference object in PLAXIS Output
+                                   (e.g., "Spudcan_RB_1" or "RigidBody_1").
+        step_disp_component_result_type: ResultType for spudcan's displacement.
+        step_load_component_result_type: ResultType for spudcan's load/reaction.
     Returns:
-        A list of dictionaries, e.g., [{'penetration': p1, 'load': l1}, ...].
+        List of dictionaries, e.g., [{'penetration': p1, 'load': l1}, ...].
         Returns empty list if data cannot be parsed.
     """
     logger.info("Starting load-penetration curve parsing.")
@@ -116,37 +113,62 @@ def parse_load_penetration_curve(g_o: Any,
                 logger.warning(f"Predefined curve '{predefined_curve_name}' not found in g_o.Curves or axis ResultTypes not provided. Will attempt step-by-step if other params provided.")
 
         # Option 2: Construct curve from step-by-step results for an object
-        if not curve_data and spudcan_ref_object_name and step_disp_component_result_type and step_load_component_result_type:
-            logger.info(f"Attempting step-by-step curve construction for object '{spudcan_ref_object_name}'.")
-            ref_object = None
-            if hasattr(g_o, 'RigidBodies') and spudcan_ref_object_name in g_o.RigidBodies:
-                ref_object = g_o.RigidBodies[spudcan_ref_object_name]
-            elif hasattr(g_o, 'Plates') and spudcan_ref_object_name in g_o.Plates:
-                 ref_object = g_o.Plates[spudcan_ref_object_name]
+        ref_object_for_step_results = None
+        effective_object_name_for_log = "N/A"
 
-            if not ref_object:
-                logger.error(f"Spudcan reference object '{spudcan_ref_object_name}' not found for step-by-step curve construction.")
-                return curve_data
+        if not curve_data and (input_spudcan_ref or spudcan_output_object_name) and \
+           step_disp_component_result_type and step_load_component_result_type:
 
-            logger.debug(f"Found reference object '{spudcan_ref_object_name}'. Using getresults.")
-            try:
-                displacements_all_steps = g_o.getresults(ref_object, target_phase, step_disp_component_result_type, 'step')
-                loads_all_steps = g_o.getresults(ref_object, target_phase, step_load_component_result_type, 'step')
+            if g_i and input_spudcan_ref and hasattr(g_i, 'get_equivalent'):
+                try:
+                    logger.info(f"Attempting to find output object via g_i.get_equivalent for input ref: {input_spudcan_ref}")
+                    # Note: get_equivalent might return a list if the input object maps to multiple output objects.
+                    # Assuming for a spudcan it's usually one primary object.
+                    equivalent_output_obj = g_i.get_equivalent(input_spudcan_ref, g_o)
+                    if isinstance(equivalent_output_obj, list) and equivalent_output_obj:
+                        ref_object_for_step_results = equivalent_output_obj[0] # Take the first one
+                        effective_object_name_for_log = getattr(ref_object_for_step_results, "Name", str(ref_object_for_step_results))
+                        logger.info(f"Found output object '{effective_object_name_for_log}' using get_equivalent.")
+                    elif not isinstance(equivalent_output_obj, list) and equivalent_output_obj:
+                         ref_object_for_step_results = equivalent_output_obj
+                         effective_object_name_for_log = getattr(ref_object_for_step_results, "Name", str(ref_object_for_step_results))
+                         logger.info(f"Found output object '{effective_object_name_for_log}' using get_equivalent.")
+                    else:
+                        logger.warning(f"g_i.get_equivalent for '{input_spudcan_ref}' returned empty or unexpected result. Will try fallback name.")
+                except Exception as e_equiv:
+                    logger.warning(f"Error using g_i.get_equivalent for '{input_spudcan_ref}': {e_equiv}. Will try fallback name.", exc_info=True)
 
-                if isinstance(displacements_all_steps, (list, tuple)) and isinstance(loads_all_steps, (list, tuple)) and \
-                   len(displacements_all_steps) == len(loads_all_steps):
-                    for disp_val, load_val in zip(displacements_all_steps, loads_all_steps):
-                        pen = abs(float(disp_val)) if isinstance(disp_val, (int, float, str)) else 0.0
-                        load = abs(float(load_val)) if isinstance(load_val, (int, float, str)) else 0.0
-                        curve_data.append({'penetration': pen, 'load': load})
-                    logger.info(f"Constructed curve with {len(curve_data)} points from step results for '{spudcan_ref_object_name}'.")
-                else:
-                    logger.warning(f"Mismatch in lengths or types of step results for '{spudcan_ref_object_name}'. "
-                                   f"Disp type: {type(displacements_all_steps)}, Load type: {type(loads_all_steps)}")
-            except PlxScriptingError as pse_steps:
-                logger.error(f"PlxScriptingError getting step results for '{spudcan_ref_object_name}': {pse_steps}", exc_info=True)
-            except Exception as e_steps:
-                logger.error(f"Error getting step results for '{spudcan_ref_object_name}': {e_steps}", exc_info=True)
+            if not ref_object_for_step_results and spudcan_output_object_name:
+                effective_object_name_for_log = spudcan_output_object_name
+                logger.info(f"Attempting step-by-step curve construction using fallback object name '{spudcan_output_object_name}'.")
+                if hasattr(g_o, 'RigidBodies') and spudcan_output_object_name in g_o.RigidBodies:
+                    ref_object_for_step_results = g_o.RigidBodies[spudcan_output_object_name]
+                elif hasattr(g_o, 'Plates') and spudcan_output_object_name in g_o.Plates:
+                    ref_object_for_step_results = g_o.Plates[spudcan_output_object_name]
+                # Add other potential collections if necessary (e.g., g_o.Volumes)
+
+            if not ref_object_for_step_results:
+                logger.error(f"Spudcan reference object (tried get_equivalent and fallback name '{spudcan_output_object_name}') not found for step-by-step curve construction.")
+            else:
+                logger.debug(f"Using reference object '{effective_object_name_for_log}' for getresults.")
+                try:
+                    displacements_all_steps = g_o.getresults(ref_object_for_step_results, target_phase, step_disp_component_result_type, 'step')
+                    loads_all_steps = g_o.getresults(ref_object_for_step_results, target_phase, step_load_component_result_type, 'step')
+
+                    if isinstance(displacements_all_steps, (list, tuple)) and isinstance(loads_all_steps, (list, tuple)) and \
+                       len(displacements_all_steps) == len(loads_all_steps):
+                        for disp_val, load_val in zip(displacements_all_steps, loads_all_steps):
+                            pen = abs(float(disp_val)) if isinstance(disp_val, (int, float, str)) else 0.0
+                            load = abs(float(load_val)) if isinstance(load_val, (int, float, str)) else 0.0
+                            curve_data.append({'penetration': pen, 'load': load})
+                        logger.info(f"Constructed curve with {len(curve_data)} points from step results for '{effective_object_name_for_log}'.")
+                    else:
+                        logger.warning(f"Mismatch in lengths or types of step results for '{effective_object_name_for_log}'. "
+                                       f"Disp type: {type(displacements_all_steps)}, Load type: {type(loads_all_steps)}")
+                except PlxScriptingError as pse_steps:
+                    logger.error(f"PlxScriptingError getting step results for '{effective_object_name_for_log}': {pse_steps}", exc_info=True)
+                except Exception as e_steps:
+                    logger.error(f"Error getting step results for '{effective_object_name_for_log}': {e_steps}", exc_info=True)
 
         # Option 3: Construct curve from step-by-step results for a node (STUB)
         elif not curve_data and spudcan_ref_node_coords and step_disp_component_result_type and step_load_component_result_type:
@@ -167,14 +189,16 @@ def parse_load_penetration_curve(g_o: Any,
 
 
 def parse_final_penetration_depth(g_o: Any,
+                                  g_i: Optional[Any] = None,
+                                  input_spudcan_ref: Optional[Any] = None,
+                                  spudcan_output_object_name: Optional[str] = None, # Fallback
                                   spudcan_ref_node_coords: Optional[Tuple[float, float, float]] = None,
-                                  spudcan_ref_object_name: Optional[str] = None,
                                   result_phase_name: Optional[str] = None,
                                   disp_component_result_type: Optional[Any] = None
                                   ) -> Optional[float]:
     """
     Parses the final penetration depth of the spudcan from a specific phase.
-    (Args and Returns are per original spec)
+    Uses g_i.get_equivalent if possible, otherwise fallback to name or node coords.
     """
     logger.info("Starting final penetration depth parsing.")
     if not g_o:
@@ -183,6 +207,7 @@ def parse_final_penetration_depth(g_o: Any,
 
     try:
         target_phase = None
+        # ... (target phase selection logic remains the same) ...
         if not result_phase_name and hasattr(g_o, 'Phases') and g_o.Phases:
             target_phase = g_o.Phases[-1]
             phase_id_val = getattr(getattr(target_phase, "Identification", None), "value", "N/A")
@@ -204,31 +229,53 @@ def parse_final_penetration_depth(g_o: Any,
         logger.info(f"Parsing final penetration depth for phase: {phase_id_val_found}")
 
         penetration_value: Optional[float] = None
+        ref_object_output = None
+        effective_object_name_for_log = "N/A"
 
-        if spudcan_ref_object_name and disp_component_result_type:
-            logger.debug(f"Attempting to get penetration for object '{spudcan_ref_object_name}'.")
-            ref_object = None
-            if hasattr(g_o, 'RigidBodies') and spudcan_ref_object_name in g_o.RigidBodies:
-                ref_object = g_o.RigidBodies[spudcan_ref_object_name]
+        if input_spudcan_ref and g_i and hasattr(g_i, 'get_equivalent'):
+            try:
+                logger.debug(f"Attempting to find output object for final penetration via g_i.get_equivalent for input ref: {input_spudcan_ref}")
+                equivalent_output_obj = g_i.get_equivalent(input_spudcan_ref, g_o)
+                if isinstance(equivalent_output_obj, list) and equivalent_output_obj:
+                    ref_object_output = equivalent_output_obj[0]
+                elif not isinstance(equivalent_output_obj, list) and equivalent_output_obj:
+                    ref_object_output = equivalent_output_obj
+                if ref_object_output:
+                    effective_object_name_for_log = getattr(ref_object_output, "Name", str(ref_object_output))
+                    logger.info(f"Found output object '{effective_object_name_for_log}' for final penetration using get_equivalent.")
+                else:
+                    logger.warning(f"get_equivalent for final penetration with '{input_spudcan_ref}' returned empty. Will try fallback name.")
+            except Exception as e_equiv:
+                logger.warning(f"Error using get_equivalent for final penetration with '{input_spudcan_ref}': {e_equiv}. Will try fallback name.", exc_info=True)
 
-            if ref_object:
-                all_values = g_o.getresults(ref_object, target_phase, disp_component_result_type)
-                if isinstance(all_values, (list, tuple)) and all_values:
-                    penetration_value = float(all_values[-1])
-                elif isinstance(all_values, (int, float)):
-                    penetration_value = float(all_values)
-                logger.info(f"Retrieved penetration for object '{spudcan_ref_object_name}': {penetration_value}")
-            else:
-                logger.warning(f"Spudcan reference object '{spudcan_ref_object_name}' not found.")
+        if not ref_object_output and spudcan_output_object_name:
+            effective_object_name_for_log = spudcan_output_object_name
+            logger.debug(f"Attempting to get penetration for object '{spudcan_output_object_name}' (fallback).")
+            # Assuming RigidBodies is the primary collection to check for spudcans
+            if hasattr(g_o, 'RigidBodies') and spudcan_output_object_name in g_o.RigidBodies:
+                ref_object_output = g_o.RigidBodies[spudcan_output_object_name]
+            # Add other collections if spudcan could be other types, e.g., Plates
+            # elif hasattr(g_o, 'Plates') and spudcan_output_object_name in g_o.Plates:
+            #    ref_object_output = g_o.Plates[spudcan_output_object_name]
 
-        elif spudcan_ref_node_coords and disp_component_result_type:
+        if ref_object_output and disp_component_result_type:
+            all_values = g_o.getresults(ref_object_output, target_phase, disp_component_result_type)
+            if isinstance(all_values, (list, tuple)) and all_values:
+                penetration_value = float(all_values[-1])
+            elif isinstance(all_values, (int, float)):
+                penetration_value = float(all_values)
+            logger.info(f"Retrieved penetration for object '{effective_object_name_for_log}': {penetration_value}")
+        elif spudcan_ref_node_coords and disp_component_result_type: # Fallback to node coords if object method fails or not specified
             logger.debug(f"Attempting to get penetration for node {spudcan_ref_node_coords}.")
             raw_value = g_o.getsingleresult(target_phase, disp_component_result_type, spudcan_ref_node_coords)
             if isinstance(raw_value, (int, float)):
                 penetration_value = float(raw_value)
             logger.info(f"Retrieved penetration for node {spudcan_ref_node_coords}: {penetration_value}")
         else:
-            logger.error("Insufficient information (object name/type or node coords/type) to get final penetration.")
+            if not disp_component_result_type:
+                 logger.error("Displacement component result type not provided.")
+            else:
+                 logger.error("Insufficient information (input_spudcan_ref, spudcan_output_object_name, or node coords) to get final penetration.")
             return None
 
         final_pen = abs(penetration_value) if penetration_value is not None else None
@@ -522,10 +569,10 @@ def compile_analysis_results(
     return compiled
 
 
-def get_standard_results_commands(project_settings: Any) -> List[Callable[[Any], Any]]:
+def get_standard_results_commands(project_settings: Any) -> List[Callable[[Any, Optional[Any]], Any]]:
     """
     Returns a list of callables, each designed to extract a specific piece of
-    result information from the PLAXIS output (g_o).
+    result information from the PLAXIS output (g_o), potentially using g_i for context.
     The order of callables here MUST match the expected order in compile_analysis_results.
     """
     from ..models import ProjectSettings as ConcreteProjectSettings # For type hinting
@@ -574,40 +621,51 @@ def get_standard_results_commands(project_settings: Any) -> List[Callable[[Any],
     # The ProjectSettings should ideally carry information about the PLAXIS model elements
     # (e.g. name of the spudcan rigid body, name of predefined curve if used).
 
-    def get_lp_curve(g_o: Any) -> List[Dict[str, float]]:
+    # --- Define a helper to get input spudcan reference (conceptual) ---
+    # This would ideally fetch the actual g_i object reference if available and configured.
+    # For now, we'll assume it might come from project_settings or be a known name.
+    # Example: input_spudcan_object_ref = ps.spudcan.plaxis_input_object_reference # If such a field existed
+    # Or, if geometry_builder always names it "Spudcan_ConeVolume" and it becomes a RigidBody named "Spudcan"
+    input_spudcan_ref_for_get_equivalent = "Spudcan" # Placeholder for the name/ref in Input
+    # Fallback name in Output if get_equivalent is not used or fails
+    output_spudcan_name_fallback = "Spudcan" # This might need to be more specific, e.g. "RigidBody_1" if auto-named
+
+    def get_lp_curve(g_o: Any, g_i: Optional[Any]) -> List[Dict[str, float]]:
         # Try to get common ResultTypes dynamically if available
         step_disp_type = getattr(getattr(g_o.ResultTypes, "RigidBody", None), "Uy", None) # Common for vertical
         step_load_type = getattr(getattr(g_o.ResultTypes, "RigidBody", None), "Fz", None)
 
-        # If specific predefined curve details are in project_settings, use them
+        # TODO: predefined_curve_name, curve_x_type, curve_y_type could be from ps.analysis_control
         # predefined_curve_name = getattr(ps.analysis_control, "output_curve_name", None)
-        # curve_x_type = ...
-        # curve_y_type = ...
 
         return parse_load_penetration_curve(
-            g_o,
+            g_o=g_o,
+            g_i=g_i,
             target_phase_name=None, # Default to last phase
-            predefined_curve_name=None, # TODO: Make configurable via ProjectSettings
-            curve_x_axis_result_type=None, # TODO: Make configurable or fetch dynamically
-            curve_y_axis_result_type=None, # TODO: Make configurable or fetch dynamically
-            spudcan_ref_object_name=spudcan_object_name_from_geom,
+            predefined_curve_name=None, # Placeholder
+            curve_x_axis_result_type=None, # Placeholder
+            curve_y_axis_result_type=None, # Placeholder
+            input_spudcan_ref=input_spudcan_ref_for_get_equivalent,
+            spudcan_output_object_name=output_spudcan_name_fallback,
             step_disp_component_result_type=step_disp_type,
             step_load_component_result_type=step_load_type
         )
     callables.append(get_lp_curve)
 
     # 2. Final Penetration Depth
-    def get_final_pen(g_o: Any) -> Optional[float]:
+    def get_final_pen(g_o: Any, g_i: Optional[Any]) -> Optional[float]:
         disp_comp_type = getattr(getattr(g_o.ResultTypes, "RigidBody", None), "Uy", None)
         return parse_final_penetration_depth(
-            g_o,
-            spudcan_ref_object_name=spudcan_object_name_from_geom,
+            g_o=g_o,
+            g_i=g_i,
+            input_spudcan_ref=input_spudcan_ref_for_get_equivalent,
+            spudcan_output_object_name=output_spudcan_name_fallback,
             result_phase_name=None, # Default to last phase
             disp_component_result_type=disp_comp_type
         )
     callables.append(get_final_pen)
 
-    # Peak resistance is calculated by compile_analysis_results from curve data, so no callable here.
+    # Peak resistance is calculated by compile_analysis_results from curve data, so no callable here for it.
 
     # Add more callables for other standard results if needed, e.g.:
     # callables.append(lambda g_o_param: parse_soil_displacements(g_o_param, ...))

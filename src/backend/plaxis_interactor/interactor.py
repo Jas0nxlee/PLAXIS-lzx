@@ -399,7 +399,12 @@ class PlaxisInteractor:
             logger.warning("`g_i.save` method not available. Cannot save project after calculation.")
         logger.info("PLAXIS calculation and subsequent save attempt finished.")
 
-    def extract_results(self, results_extraction_callables: List[Callable[[Any], Any]]) -> List[Any]:
+    def extract_results(self, results_extraction_callables: List[Callable[[Any, Optional[Any]], Any]]) -> List[Any]:
+        """
+        Extracts results from PLAXIS Output.
+        The callables may now also receive g_i (input global object) for context,
+        e.g., to use get_equivalent.
+        """
         if not self.project_settings or not self.project_settings.project_file_path: # type: ignore
             raise PlaxisConfigurationError("ProjectSettings or project_file_path not provided for results extraction.")
 
@@ -421,7 +426,9 @@ class PlaxisInteractor:
             command_name = getattr(cmd_callable, '__name__', f"lambda_res_cmd_at_index_{i+1}")
             try:
                 logger.debug(f"Executing result extraction command {i+1}/{len(results_extraction_callables)}: {command_name}")
-                result_piece = cmd_callable(self.g_o)
+                # Pass both g_o and g_i to the callable. g_i might be None if not connected or relevant.
+                # The callable needs to be designed to handle g_i potentially being None if it uses it.
+                result_piece = cmd_callable(self.g_o, self.g_i)
                 extracted_data_list.append(result_piece)
             except Exception as e:
                 logger.error(f"Result extraction command '{command_name}' failed: {e}", exc_info=True)
