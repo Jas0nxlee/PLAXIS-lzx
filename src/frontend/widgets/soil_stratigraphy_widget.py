@@ -106,9 +106,24 @@ class SoilStratigraphyTableModel(QAbstractTableModel):
                 else:
                     layer.original_material = MaterialProperties(model_name=str(value))
                 changed = True
+                # When material model changes, the display text of "Parameters" column (col 3) also changes.
                 self.dataChanged.emit(self.index(row, 3), self.index(row, 3), [Qt.ItemDataRole.DisplayRole])
+        elif col == 3: # Parameters column
+            if isinstance(value, MaterialProperties):
+                # The delegate has updated the layer.original_material instance already.
+                # We just need to acknowledge the change for this cell.
+                # layer.original_material = value # This would replace the instance, ensure delegate modifies in-place or this is intended.
+                # For now, assume delegate modified the existing 'layer.original_material' object.
+                logger.debug(f"Parameters updated for layer {row} via model setData.")
+                changed = True
+            else:
+                logger.warning(f"setData for Parameters column (3) received unexpected type: {type(value)}")
+
         if changed:
-            self.dataChanged.emit(index, index, [role])
+            self.dataChanged.emit(index, index, [role]) # For the current cell
+            # If col 2 (Material Model) changed, we already emitted dataChanged for col 3's DisplayRole.
+            # If col 3 (Parameters) changed, its DisplayRole text might not change unless material model also changed.
+            # However, the underlying parameters are different, which is the key.
             return True
         return False
 
@@ -135,6 +150,34 @@ class SoilStratigraphyTableModel(QAbstractTableModel):
             self.beginRemoveRows(QModelIndex(), row, row)
             del self._layers[row]
             self.endRemoveRows()
+            return True
+        return False
+
+    def move_layer_up(self, row: int) -> bool:
+        if 0 < row < self.rowCount():
+            # self.beginMoveRows(QModelIndex(), row, row, QModelIndex(), row - 1)
+            # Qt's beginMoveRows is tricky; simpler to emit layoutChanged for now or manually manage signals
+            self.layoutAboutToBeChanged.emit()
+            self._layers[row], self._layers[row-1] = self._layers[row-1], self._layers[row]
+            # self.endMoveRows()
+            self.layoutChanged.emit()
+            # Manually emit dataChanged for the two swapped rows if necessary for delegates/display updates
+            # For simplicity, layoutChanged should handle most updates.
+            # Specific dataChanged signals might be needed if cell content depends on row index directly.
+            # self.dataChanged.emit(self.index(row - 1, 0), self.index(row - 1, self.columnCount() - 1))
+            # self.dataChanged.emit(self.index(row, 0), self.index(row, self.columnCount() - 1))
+            return True
+        return False
+
+    def move_layer_down(self, row: int) -> bool:
+        if 0 <= row < self.rowCount() - 1:
+            # self.beginMoveRows(QModelIndex(), row, row, QModelIndex(), row + 2) # Destination is where it *will* be
+            self.layoutAboutToBeChanged.emit()
+            self._layers[row], self._layers[row+1] = self._layers[row+1], self._layers[row]
+            # self.endMoveRows()
+            self.layoutChanged.emit()
+            # self.dataChanged.emit(self.index(row, 0), self.index(row, self.columnCount() - 1))
+            # self.dataChanged.emit(self.index(row + 1, 0), self.index(row + 1, self.columnCount() - 1))
             return True
         return False
 
@@ -181,8 +224,14 @@ class SoilStratigraphyWidget(QWidget):
         layer_buttons_layout = QHBoxLayout()
         self.add_layer_button = QPushButton("Add Layer")
         self.remove_layer_button = QPushButton("Remove Selected Layer")
+        self.move_layer_up_button = QPushButton("Move Up")
+        self.move_layer_down_button = QPushButton("Move Down")
+
         layer_buttons_layout.addWidget(self.add_layer_button)
         layer_buttons_layout.addWidget(self.remove_layer_button)
+        layer_buttons_layout.addSpacing(20) # Add some space
+        layer_buttons_layout.addWidget(self.move_layer_up_button)
+        layer_buttons_layout.addWidget(self.move_layer_down_button)
         layer_buttons_layout.addStretch()
         group_layout.addLayout(layer_buttons_layout)
 
@@ -208,22 +257,45 @@ class SoilStratigraphyWidget(QWidget):
 
         self.add_layer_button.clicked.connect(self.on_add_layer)
         self.remove_layer_button.clicked.connect(self.on_remove_layer)
+        self.move_layer_up_button.clicked.connect(self.on_move_layer_up)
+        self.move_layer_down_button.clicked.connect(self.on_move_layer_down)
+
         self.table_model.dataChanged.connect(self._emit_data_changed_and_update_schematic)
         self.table_model.rowsInserted.connect(self._emit_data_changed_and_update_schematic)
         self.table_model.rowsRemoved.connect(self._emit_data_changed_and_update_schematic)
+        self.table_model.layoutChanged.connect(self._emit_data_changed_and_update_schematic) # For row moves
         self.water_table_spinbox.valueChanged.connect(self._emit_data_changed_and_update_schematic)
+        self.layers_tableview.selectionModel().selectionChanged.connect(self.update_button_states)
+
 
         delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self.layers_tableview)
         delete_shortcut.activated.connect(self.on_remove_layer)
 
         self._update_schematic_display() # Initial draw
+        self.update_button_states() # Initial button states
         logger.info("SoilStratigraphyWidget initialized with schematic.")
 
     @Slot()
     def _emit_data_changed_and_update_schematic(self):
         self._update_schematic_display()
+        self.update_button_states() # Update states when data changes (e.g. rows removed/added)
         self.data_changed.emit()
         logger.debug("SoilStratigraphyWidget: Data changed signal emitted and schematic updated.")
+
+    def update_button_states(self):
+        selected_indexes = self.layers_tableview.selectionModel().selectedRows()
+        has_selection = bool(selected_indexes)
+        self.remove_layer_button.setEnabled(has_selection)
+
+        if not has_selection or len(selected_indexes) > 1: # Only enable move for single selection
+            self.move_layer_up_button.setEnabled(False)
+            self.move_layer_down_button.setEnabled(False)
+            return
+
+        selected_row = selected_indexes[0].row()
+        self.move_layer_up_button.setEnabled(selected_row > 0)
+        self.move_layer_down_button.setEnabled(selected_row < self.table_model.rowCount() - 1)
+
 
     def _update_schematic_display(self):
         """Updates the soil stratigraphy schematic widget."""
@@ -258,6 +330,35 @@ class SoilStratigraphyWidget(QWidget):
 
         for index in sorted(selected_indexes, key=lambda idx: idx.row(), reverse=True):
             self.table_model.remove_layer(index.row())
+        self.update_button_states() # Update after removal
+
+    @Slot()
+    def on_move_layer_up(self):
+        selected_indexes = self.layers_tableview.selectionModel().selectedRows()
+        if not selected_indexes or len(selected_indexes) > 1:
+            return # Should be disabled, but good practice to check
+
+        current_row = selected_indexes[0].row()
+        if self.table_model.move_layer_up(current_row):
+            # Select the moved item in its new position
+            self.layers_tableview.selectionModel().clearSelection()
+            self.layers_tableview.selectRow(current_row - 1)
+        self.update_button_states()
+
+
+    @Slot()
+    def on_move_layer_down(self):
+        selected_indexes = self.layers_tableview.selectionModel().selectedRows()
+        if not selected_indexes or len(selected_indexes) > 1:
+            return
+
+        current_row = selected_indexes[0].row()
+        if self.table_model.move_layer_down(current_row):
+            # Select the moved item in its new position
+            self.layers_tableview.selectionModel().clearSelection()
+            self.layers_tableview.selectRow(current_row + 1)
+        self.update_button_states()
+
 
     def load_data(self, soil_profile_data: Optional[Any]):
         logger.info(f"SoilStratigraphyWidget: Loading data - {type(soil_profile_data)}")

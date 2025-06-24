@@ -59,6 +59,22 @@ class MaterialProperties:
     # G0ref: Optional[float] = None    # Initial shear modulus at very small strains (HSsmall)
     # gamma07: Optional[float] = None  # Shear strain at which Gs = 0.7 G0 (HSsmall)
 
+    # Parameters for Hardening Soil (taken from SOIL_MODEL_PARAMETERS in delegates.py)
+    E50ref: Optional[float] = None # Secant stiffness in standard drained triaxial test
+    Eoedref: Optional[float] = None # Tangent stiffness for primary oedometer loading
+    Eurref: Optional[float] = None  # Unloading/reloading stiffness
+    m: Optional[float] = None        # Power for stress-level dependency of stiffness
+    pRef: Optional[float] = None     # Reference stress for stiffnesses
+    K0NC: Optional[float] = None     # K0 for normal consolidation (advanced tab)
+    Rf: Optional[float] = None       # Failure ratio Rf = qf/qa (advanced tab)
+    # Note: nu for HardeningSoil is often nu_ur (Poisson's ratio for unloading-reloading)
+    # The existing 'nu' field can be used for this, or a specific 'nu_ur' can be added if distinction is critical.
+
+    # Parameters for Soft Soil (taken from SOIL_MODEL_PARAMETERS in delegates.py)
+    lambda_star: Optional[float] = None # Modified compression index (λ*)
+    kappa_star: Optional[float] = None  # Modified swelling index (κ*)
+    # Note: SoftSoil also uses nu_ur, cRef, phi, psi. And M, K0NC if advanced options are used.
+
     # For additional or model-specific parameters not listed as direct attributes
     other_params: Dict[str, Any] = field(default_factory=dict)
 
