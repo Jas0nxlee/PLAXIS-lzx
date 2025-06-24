@@ -103,9 +103,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** UI/UX Design Principles (6.1.4, 6.6.3).
     *   **Status:** Done (Basic `QStackedWidget` with placeholder pages in `MainWindow`).
 *   **4.5. Create Reusable UI Components/Widgets**
-    *   **Description:** Initial reusable widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`, `LoadingConditionsWidget`, `AnalysisControlWidget`) created and integrated. `MainWindow` now includes an "Execution" panel with a "Run Analysis" button. Further components to be developed iteratively.
+    *   **Description:** Core reusable input and display widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`, `LoadingConditionsWidget`, `AnalysisControlWidget`, `MplWidget`, schematic widgets, dialogs) are created and integrated. Further generic components can be developed as new features demand.
     *   **PRD Ref:** UI/UX Design Principles (6.2, 6.3).
-    *   **Status:** In Progress.
+    *   **Status:** Done (Core set of custom widgets complete).
 *   **4.6. Implement Theme/Styling**
     *   **Description:** Apply a professional and consistent visual theme (colors, fonts, spacing) to the application.
     *   **PRD Ref:** UI/UX Design Principles (6.2).
@@ -392,5 +392,7 @@ This document outlines the detailed development tasks required to create the PLA
     *   **Status:** Not Started.
 
 This detailed task list should provide a solid foundation for planning and executing the development of the PLAXIS 3D Spudcan Penetration Automation tool.
+
+[end of tasks.md]
 
 [end of tasks.md]
