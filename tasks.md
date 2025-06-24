@@ -76,9 +76,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **Status:** Enhanced (Basic CLI execution implemented, docstrings improved).
     *   **Dependencies:** Logging module (Section 9).
 *   **3.8. Implement PLAXIS Output Parsing Logic**
-    *   **Description:** Added `compile_analysis_results` function to `results_parser.py` to process raw results into an `AnalysisResults` object. `get_standard_results_commands` updated to provide callables for key results (load-pen curve, final penetration) and attempts to dynamically get `ResultTypes`. Individual parsing functions have basic error handling. Addressed note about refinement by structuring the compilation and improving command generation for standard results.
+    *   **Description:** `compile_analysis_results` function in `results_parser.py` enhanced for robustness in handling raw result lists (type/length checks, error propagation). `get_standard_results_commands` structure maintained.
     *   **PRD Ref:** Functional Requirements (4.2.3).
-    *   **Status:** Enhanced (Structured result compilation and improved standard result command generation).
+    *   **Status:** Enhanced (Structured result compilation and improved standard result command generation, robustness of `compile_analysis_results` improved).
 *   **3.9. Define PLAXIS Error Detection and Mapping**
     *   **Description:** `PlaxisInteractor._map_plaxis_sdk_exception_to_custom` (renamed from `map_plaxis_error`) enhanced with slightly more detailed checks for parameter/value errors and calculation abortion messages. The function already had a good base of common error string checks. Further refinement will depend on testing with a live PLAXIS instance. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.2.4.1), Error Handling (8.1.1.4).
@@ -218,9 +218,9 @@ This document outlines the detailed development tasks required to create the PLA
 ### 7.1. Execution Control Panel (PRD 4.1.3)
 
 *   **7.1.1. Implement Start/Run Analysis Button UI & Logic**
-    *   **Description:** `MainWindow.on_run_analysis_clicked` now instantiates `PlaxisInteractor`, prepares command callables from builder modules, and calls interactor methods for model setup, calculation, and results extraction. Basic error handling and UI updates (status messages, button states) are included. Docstrings enhanced.
+    *   **Description:** `MainWindow.on_run_analysis_clicked` refactored to use `AnalysisWorker` on a `QThread` for non-blocking execution. Connects worker signals for UI updates. Error handling and UI state updates improved.
     *   **PRD Ref:** Functional Requirements (4.1.3.1).
-    *   **Status:** Implemented.
+    *   **Status:** Enhanced (QThread implementation for UI responsiveness).
     *   **Dependencies:** Backend PLAXIS interaction layer (Section 3), PLAXIS path configuration (Task 8.1).
 *   **7.1.2. Implement Pause/Resume Analysis Button UI & Logic (If Feasible)**
     *   **Description:** "Pause Analysis" and "Resume Analysis" buttons exist in UI. True pause/resume of PLAXIS calculation phases via external scripting is generally not feasible with current PLAXIS API capabilities.
@@ -229,7 +229,7 @@ This document outlines the detailed development tasks required to create the PLA
 *   **7.1.3. Implement Stop/Cancel Analysis Button UI & Logic**
     *   **Description:** `PlaxisInteractor` instance is now stored in `MainWindow`. `on_stop_analysis_clicked` slot calls `interactor.attempt_stop_calculation()`. This method attempts to terminate CLI process or call `g_i.breakcalculation()` for API. UI buttons (Run/Stop) are updated accordingly. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.3.3).
-    *   **Status:** Implemented.
+    *   **Status:** Implemented. (Stop request now sent to worker thread).
 
 ### 7.2. Execution Steps Display (PRD 4.1.4)
 
@@ -320,7 +320,7 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Logging (8.3).
     *   **Status:** Done.
 *   **9.3. Frontend: Implement User-Friendly Error Dialogs/Messages**
-    *   **Description:** Enhanced `MainWindow.on_run_analysis_clicked` to catch specific `PlaxisAutomationError` subtypes (e.g., `PlaxisConnectionError`, `PlaxisConfigurationError`, `PlaxisCalculationError`) and display more tailored `QMessageBox` dialogs to the user.
+    *   **Description:** Enhanced `MainWindow.on_run_analysis_clicked` to catch specific `PlaxisAutomationError` subtypes (e.g., `PlaxisConnectionError`, `PlaxisConfigurationError`, `PlaxisCalculationError`) and display more tailored `QMessageBox` dialogs to the user. Analysis execution moved to `AnalysisWorker` which emits error signals.
     *   **PRD Ref:** Error Handling (8.1).
     *   **Status:** Implemented.
 *   **9.4. Frontend: Implement Input Validation Feedback**
@@ -328,9 +328,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Error Handling (8.1.2).
     *   **Status:** Partially Implemented.
 *   **9.5. Frontend: UI for Log Access (Optional)**
-    *   **Description:** If PRD 8.3.3.3 (easy log access) or 8.3.4 (UI log display) is implemented, create the necessary UI elements.
+    *   **Description:** Added "Open Log File Location" button to `MainWindow` to open the directory containing `plaxis_automation.log`.
     *   **PRD Ref:** Logging (8.3.3.3, 8.3.4).
-    *   **Status:** Implemented (Added "Open Log File Location" button).
+    *   **Status:** Implemented.
 
 ## 10. Testing
 
@@ -365,7 +365,7 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Usability (5.2.2).
     *   **Status:** Not Started.
 *   **11.2. Document Backend Code (Docstrings, Comments)**
-    *   **Description:** Reviewed and enhanced docstrings/comments for key backend modules: `plaxis_interactor.py`, `models.py`, `units.py`.
+    *   **Description:** Reviewed and enhanced docstrings/comments for key backend modules: `plaxis_interactor.py`, `models.py`, `units.py`, `results_parser.py`.
     *   **PRD Ref:** Maintainability (5.4.2).
     *   **Status:** Enhanced.
 *   **11.3. Document Frontend Code (Comments)**
@@ -380,9 +380,9 @@ This document outlines the detailed development tasks required to create the PLA
 ## 12. Packaging & Distribution
 
 *   **12.1. Create Executable/Installer for Windows**
-    *   **Description:** Use PyInstaller (or equivalent) to package the Python application and all its dependencies into a standalone executable or installer for Windows.
+    *   **Description:** Refined `build.sh` with more complete PyInstaller commands and options (e.g., handling icon, paths, one-folder bundle). Actual packaging not run.
     *   **PRD Ref:** Packaging and Distribution (7.5.1), Compatibility (5.7.1).
-    *   **Status:** Placeholder script `build.sh` exists. **Actual packaging not done.**
+    *   **Status:** Enhanced (script prepared).
 *   **12.2. Test Packaged Application on Target OS**
     *   **Description:** Install and run the packaged application on a clean Windows environment to ensure it works correctly.
     *   **PRD Ref:** Reliability (5.3.1).
