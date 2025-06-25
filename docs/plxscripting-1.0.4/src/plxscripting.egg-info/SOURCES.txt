@@ -1,6 +1,7 @@
 LICENSE
 README.md
 pyproject.toml
+setup.cfg
 src/encryption.py
 src/plxscripting/__init__.py
 src/plxscripting/__version__.py

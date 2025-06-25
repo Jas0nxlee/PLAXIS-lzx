@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: plxscripting
 Version: 1.0.4
 Summary: Python files required to interact with PLAXIS API
@@ -540,6 +540,7 @@ Requires-Dist: ipykernel>=6.21.2
 Provides-Extra: test
 Requires-Dist: coveralls; extra == "test"
 Requires-Dist: pytest; extra == "test"
+Dynamic: license-file
 
 # plxscripting
 

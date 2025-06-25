@@ -328,5 +328,3 @@ class ParameterEditDialog(QDialog):
                 else:
                     params[param_name] = editor.text()
         return params
-
-```

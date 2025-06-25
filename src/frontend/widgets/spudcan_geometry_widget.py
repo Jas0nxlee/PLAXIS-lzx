@@ -18,8 +18,8 @@ from PySide6.QtCore import Signal, Slot
 from typing import Optional, Dict, Any
 
 from .spudcan_schematic_widget import SpudcanSchematicWidget
-from backend.validation import validate_numerical_range, ValidationError
-from backend.models import SpudcanGeometry
+from ...backend.validation import validate_numerical_range, ValidationError
+from ...backend.models import SpudcanGeometry
 
 logger = logging.getLogger(__name__)
 
