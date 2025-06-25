@@ -15,11 +15,11 @@ This document outlines the detailed development tasks required to create the PLA
 *   **1.3. Setup Development Environment & Dependencies**
     *   **Description:** Create `requirements.txt` (for Python backend) and potentially `package.json` (if Electron/web frontend is chosen) listing all necessary libraries (e.g., PyQt/PySide, Pandas, Openpyxl). Document setup steps for new developers.
     *   **PRD Ref:** Technology Stack (7).
-    *   **Status:** Done (`requirements.txt` created).
+    *   **Status:** Done (`requirements.txt` created, `pytest` and `matplotlib` added).
 *   **1.4. Configure Linter and Formatter**
     *   **Description:** Integrate tools like Flake8/Pylint and Black/Autopep8 for Python to ensure code quality and consistency.
     *   **PRD Ref:** Maintainability (5.4).
-    *   **Status:** Done (Placeholder `.flake8` and `pyproject.toml` created).
+    *   **Status:** Done (Placeholder `.flake8` and `pyproject.toml` created, `pyproject.toml` updated for pytest).
 *   **1.5. Basic Build/Packaging Script Setup**
     *   **Description:** Initial setup for packaging tools like PyInstaller (or Electron Builder if applicable) to ensure a basic build can be produced early on.
     *   **PRD Ref:** Packaging and Distribution (7.5).
@@ -28,9 +28,9 @@ This document outlines the detailed development tasks required to create the PLA
 ## 2. Backend Development: Core Logic & Utilities
 
 *   **2.1. Define Core Data Structures/Models**
-    *   **Description:** Implement Python classes or data structures to represent project settings, spudcan geometry, soil layers, soil material properties, loading conditions, and analysis results. These models will be used internally by the backend and for communication with the frontend.
+    *   **Description:** Implement Python classes or data structures to represent project settings, spudcan geometry, soil layers, soil material properties, loading conditions, and analysis results. These models will be used internally by the backend and for communication with the frontend. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2, 4.1.6), Technology Stack (7.4 for project file saving).
-    *   **Status:** Enhanced (`models.py` updated for `MaterialProperties` and `AnalysisControlParameters`).
+    *   **Status:** Enhanced (`models.py` updated for `MaterialProperties` and `AnalysisControlParameters`, docstrings improved).
 *   **2.2. Implement Project Save/Load Functionality**
     *   **Description:** Develop functions to serialize the project data models (from task 2.1) to a file (JSON or XML as per PRD 7.4.1) and deserialize them back into the application.
     *   **PRD Ref:** Functional Requirements (4.1.1.2, 4.1.1.3).
@@ -40,9 +40,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.3.2).
     *   **Status:** Done (`validation.py` created with initial functions).
 *   **2.4. Unit System Management Logic**
-    *   **Description:** Implement logic to handle unit conversions if different unit systems are supported (PRD 4.1.7.3). If only one system is used, ensure consistency. Define how units are managed internally and presented.
+    *   **Description:** Implemented logic in `units.py` to fetch unit system from settings. Basic structure for unit labels. Full conversion logic deferred. Docstrings reviewed.
     *   **PRD Ref:** Functional Requirements (4.1.7.3).
-    *   **Status:** Done (`units.py` created with stubs, focusing on SI).
+    *   **Status:** Partially Implemented.
 
 ## 3. Backend Development: PLAXIS Interaction Layer
 
@@ -71,18 +71,18 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Functional Requirements (4.2.1.5).
     *   **Status:** Clarified (Handled in Output/Task 3.8).
 *   **3.7. Develop PLAXIS Process Execution & Monitoring Module**
-    *   **Description:** API call orchestration via callables is implemented in `PlaxisInteractor`. CLI process execution in `_execute_cli_script` method in `PlaxisInteractor.py` has been made functional using `subprocess.Popen`, including basic stdout/stderr capture, timeout, and process management. Comprehensive real-time monitoring for API/CLI is not yet implemented.
+    *   **Description:** API call orchestration via callables is implemented in `PlaxisInteractor`. CLI process execution in `_execute_cli_script` method in `PlaxisInteractor.py` has been made functional using `subprocess.Popen`, including basic stdout/stderr capture, timeout, and process management. Comprehensive real-time monitoring for API/CLI is not yet implemented. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.2.2).
-    *   **Status:** Enhanced (Basic CLI execution implemented).
+    *   **Status:** Enhanced (Basic CLI execution implemented, docstrings improved).
     *   **Dependencies:** Logging module (Section 9).
 *   **3.8. Implement PLAXIS Output Parsing Logic**
-    *   **Description:** Added `compile_analysis_results` function to `results_parser.py` to process raw results into an `AnalysisResults` object. `get_standard_results_commands` updated to provide callables for key results (load-pen curve, final penetration) and attempts to dynamically get `ResultTypes`. Individual parsing functions have basic error handling. Addressed note about refinement by structuring the compilation and improving command generation for standard results.
+    *   **Description:** `compile_analysis_results` function in `results_parser.py` enhanced for robustness in handling raw result lists (type/length checks, error propagation). `get_standard_results_commands` structure maintained.
     *   **PRD Ref:** Functional Requirements (4.2.3).
-    *   **Status:** Enhanced (Structured result compilation and improved standard result command generation).
+    *   **Status:** Enhanced (Structured result compilation and improved standard result command generation, robustness of `compile_analysis_results` improved).
 *   **3.9. Define PLAXIS Error Detection and Mapping**
-    *   **Description:** `PlaxisInteractor._map_plaxis_sdk_exception_to_custom` (renamed from `map_plaxis_error`) enhanced with slightly more detailed checks for parameter/value errors and calculation abortion messages. The function already had a good base of common error string checks. Further refinement will depend on testing with a live PLAXIS instance.
+    *   **Description:** `PlaxisInteractor._map_plaxis_sdk_exception_to_custom` (renamed from `map_plaxis_error`) enhanced with slightly more detailed checks for parameter/value errors and calculation abortion messages. The function already had a good base of common error string checks. Further refinement will depend on testing with a live PLAXIS instance. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.2.4.1), Error Handling (8.1.1.4).
-    *   **Status:** Enhanced (Minor additions to error string checks).
+    *   **Status:** Enhanced (Minor additions to error string checks, docstrings improved).
 
 ## 4. Frontend Development: UI Shell & Framework
 
@@ -103,9 +103,9 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** UI/UX Design Principles (6.1.4, 6.6.3).
     *   **Status:** Done (Basic `QStackedWidget` with placeholder pages in `MainWindow`).
 *   **4.5. Create Reusable UI Components/Widgets**
-    *   **Description:** Initial reusable widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`, `LoadingConditionsWidget`, `AnalysisControlWidget`) created and integrated. `MainWindow` now includes an "Execution" panel with a "Run Analysis" button. Further components to be developed iteratively.
+    *   **Description:** Core reusable input and display widgets (`SpudcanGeometryWidget`, `SoilStratigraphyWidget`, `LoadingConditionsWidget`, `AnalysisControlWidget`, `MplWidget`, schematic widgets, dialogs) are created and integrated. Further generic components can be developed as new features demand.
     *   **PRD Ref:** UI/UX Design Principles (6.2, 6.3).
-    *   **Status:** In Progress.
+    *   **Status:** Done (Core set of custom widgets complete).
 *   **4.6. Implement Theme/Styling**
     *   **Description:** Apply a professional and consistent visual theme (colors, fonts, spacing) to the application.
     *   **PRD Ref:** UI/UX Design Principles (6.2).
@@ -138,9 +138,9 @@ This document outlines the detailed development tasks required to create the PLA
 ### 6.1. Spudcan Geometry Input Section (PRD 4.1.2.1)
 
 *   **6.1.1. UI for Spudcan Dimensional Inputs**
-    *   **Description:** Create input fields for spudcan diameter, height/cone angle, etc. Implement validation.
+    *   **Description:** Create input fields for spudcan diameter, height/cone angle, etc. Implement validation. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2.1.1, 4.1.2.1.2).
-    *   **Status:** Done (`SpudcanGeometryWidget` created and integrated).
+    *   **Status:** Done (`SpudcanGeometryWidget` created and integrated, docstrings improved).
     *   **Dependencies:** Backend input validation utilities (2.3).
 *   **6.1.2. UI for Spudcan Type Selection (if applicable)**
     *   **Description:** Implement dropdown or radio buttons if predefined spudcan types are supported.
@@ -182,11 +182,11 @@ This document outlines the detailed development tasks required to create the PLA
 ### 6.3. Loading Conditions Input Section (PRD 4.1.2.3)
 
 *   **6.3.1. UI for Vertical Pre-load Input**
-    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QDoubleSpinBox` for vertical pre-load. Integrated into `MainWindow`.
+    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QDoubleSpinBox` for vertical pre-load. Integrated into `MainWindow`. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.1).
     *   **Status:** Implemented.
 *   **6.3.2. UI for Target Penetration/Load Input**
-    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QComboBox` to select target type (Penetration/Load) and a `QDoubleSpinBox` for the target value. Label and suffix for the spinbox update dynamically. Integrated into `MainWindow`.
+    *   **Description:** Implemented in `LoadingConditionsWidget` with a `QComboBox` to select target type (Penetration/Load) and a `QDoubleSpinBox` for the target value. Label and suffix for the spinbox update dynamically. Integrated into `MainWindow`. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2.3.2).
     *   **Status:** Implemented.
 *   **6.3.3. UI for Load Steps/Displacement Increments Input**
@@ -197,19 +197,19 @@ This document outlines the detailed development tasks required to create the PLA
 ### 6.4. Analysis Control Parameters Input Section (PRD 4.1.2.4)
 
 *   **6.4.1. UI for Meshing Parameter Inputs**
-    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for global coarseness and a `QCheckBox` for spudcan refinement. Integrated into `MainWindow`.
+    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for global coarseness and a `QCheckBox` for spudcan refinement. Integrated into `MainWindow`. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.1).
     *   **Status:** Implemented.
 *   **6.4.2. UI for Initial Stress Calculation Method Selection**
-    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for selecting the method. Integrated into `MainWindow`.
+    *   **Description:** Implemented in `AnalysisControlWidget` with a `QComboBox` for selecting the method. Integrated into `MainWindow`. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.2).
     *   **Status:** Implemented.
 *   **6.4.3. UI for Calculation Phase Configuration (Simplified)**
     *   **Description:** UI for direct phase sequence manipulation not yet implemented. Current backend logic implies a fixed sequence. This task requires further clarification if user control over phases is needed beyond parameter adjustments.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.3).
-    *   **Status:** Deferred (Current fixed backend sequence assumed sufficient for now).
+    *   **Status:** Deferred. (Current fixed backend sequence assumed sufficient for now)
 *   **6.4.4. UI for Advanced Analysis Settings (Optional)**
-    *   **Description:** Implemented basic inputs in `AnalysisControlWidget` for Max Iterations, Tolerated Error, Reset Displacements to Zero. Also added UI for Max Calculation Steps (`MaxSteps`) and Min Iterations (`MinIterations`). `MaxStepsStored` was also added to this widget (addressed under task 6.3.3).
+    *   **Description:** Implemented basic inputs in `AnalysisControlWidget` for Max Iterations, Tolerated Error, Reset Displacements to Zero. Also added UI for Max Calculation Steps (`MaxSteps`) and Min Iterations (`MinIterations`). `MaxStepsStored` was also added to this widget (addressed under task 6.3.3). Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.2.4.4).
     *   **Status:** Implemented.
 
@@ -218,18 +218,18 @@ This document outlines the detailed development tasks required to create the PLA
 ### 7.1. Execution Control Panel (PRD 4.1.3)
 
 *   **7.1.1. Implement Start/Run Analysis Button UI & Logic**
-    *   **Description:** `MainWindow.on_run_analysis_clicked` now instantiates `PlaxisInteractor`, prepares command callables from builder modules, and calls interactor methods for model setup, calculation, and results extraction. Basic error handling and UI updates (status messages, button states) are included.
+    *   **Description:** `MainWindow.on_run_analysis_clicked` refactored to use `AnalysisWorker` on a `QThread` for non-blocking execution. Connects worker signals for UI updates. Error handling and UI state updates improved.
     *   **PRD Ref:** Functional Requirements (4.1.3.1).
-    *   **Status:** Implemented (Note: Full end-to-end test pending; QThread for UI responsiveness is a future enhancement).
+    *   **Status:** Enhanced (QThread implementation for UI responsiveness).
     *   **Dependencies:** Backend PLAXIS interaction layer (Section 3), PLAXIS path configuration (Task 8.1).
 *   **7.1.2. Implement Pause/Resume Analysis Button UI & Logic (If Feasible)**
     *   **Description:** "Pause Analysis" and "Resume Analysis" buttons exist in UI. True pause/resume of PLAXIS calculation phases via external scripting is generally not feasible with current PLAXIS API capabilities.
     *   **PRD Ref:** Functional Requirements (4.1.3.2).
     *   **Status:** Not Feasible (Marked as not feasible due to PLAXIS API limitations). Buttons may be hidden or disabled permanently.
 *   **7.1.3. Implement Stop/Cancel Analysis Button UI & Logic**
-    *   **Description:** `PlaxisInteractor` instance is now stored in `MainWindow`. `on_stop_analysis_clicked` slot calls `interactor.attempt_stop_calculation()`. This method attempts to terminate CLI process or call `g_i.breakcalculation()` for API. UI buttons (Run/Stop) are updated accordingly.
+    *   **Description:** `PlaxisInteractor` instance is now stored in `MainWindow`. `on_stop_analysis_clicked` slot calls `interactor.attempt_stop_calculation()`. This method attempts to terminate CLI process or call `g_i.breakcalculation()` for API. UI buttons (Run/Stop) are updated accordingly. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.3.3).
-    *   **Status:** Implemented (Effectiveness for API's blocking `calculate` call depends on threading, which is future work. CLI stop is more robust).
+    *   **Status:** Implemented. (Stop request now sent to worker thread).
 
 ### 7.2. Execution Steps Display (PRD 4.1.4)
 
@@ -265,28 +265,29 @@ This document outlines the detailed development tasks required to create the PLA
 ### 7.4. Results Display Section (PRD 4.1.6)
 
 *   **7.4.1. UI for Summary of Key Results**
-    *   **Description:** Added `QLabel`s to `MainWindow`'s results page for "Final Penetration Depth" and "Peak Vertical Resistance". Implemented `_update_results_display` method to populate these from `AnalysisResults` object.
+    *   **Description:** Added `QLabel`s to `MainWindow`'s results page for "Final Penetration Depth" and "Peak Vertical Resistance". Implemented `_update_results_display` method to populate these from `AnalysisResults` object. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.6.1).
     *   **Status:** Implemented.
-    *   **Dependencies:** Backend output parsing (3.8) (Note: `results_parser.compile_analysis_results` needs full implementation).
-*   **7.4.2. UI for Graphical Display (Load-Penetration Curve)**
-    *   **Description:** Implement a chart/plot widget (e.g., using Matplotlib integration with PyQt, or a native Qt chart) to display the Load-Penetration curve.
-    *   **PRD Ref:** Functional Requirements (4.1.6.2).
-    *   **Status:** Deferred.
     *   **Dependencies:** Backend output parsing (3.8).
+*   **7.4.2. UI for Graphical Display (Load-Penetration Curve)**
+        *   **Description:** Implemented `MplWidget` using Matplotlib and integrated it into the results tab of `MainWindow`. The `_update_results_display` method now attempts to plot data from `AnalysisResults.load_penetration_curve_data`. Docstrings enhanced.
+    *   **PRD Ref:** Functional Requirements (4.1.6.2).
+        *   **Status:** Implemented.
+        *   **Dependencies:** Backend output parsing (3.8).
 *   **7.4.3. UI for Optional Contour Plot Display (If Feasible)**
     *   **Description:** If PLAXIS can export simple contour images, implement a way to display these.
     *   **PRD Ref:** Functional Requirements (4.1.6.2).
     *   **Status:** Deferred.
 *   **7.4.4. UI for Tabular Data Output**
-    *   **Description:** Implement a table widget to display detailed results (load, displacement, etc.) in a tabular format.
+        *   **Description:** Added a `QTableWidget` to the results tab in `MainWindow`. The `_update_results_display` method now populates this table with load and penetration data, similar to the plot. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.6.3).
-    *   **Status:** Deferred.
+        *   **Status:** Implemented.
+        *   **Dependencies:** Backend output parsing (3.8).
 *   **7.4.5. Implement Export Results Functionality (Plots, CSV/Excel)**
-    *   **Description:** Add buttons/menu items to export plots as images and tabular data as CSV or Excel files. Interface with backend or use frontend libraries.
+        *   **Description:** Added "Export Plot as Image" and "Export Table Data as CSV" buttons to the results page in `MainWindow`. Implemented `on_export_plot` to save Matplotlib figure (PNG, JPG, SVG, PDF) and `on_export_table_data` to save QTableWidget content as CSV, both using `QFileDialog`. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.6.4).
-    *   **Status:** Deferred.
-    *   **Dependencies:** Data handling libraries (Pandas, Openpyxl - PRD 7.4.2).
+        *   **Status:** Implemented.
+        *   **Dependencies:** Matplotlib for plot export. `AnalysisResults` for data.
 *   **7.4.6. Implement Simple PDF Report Generation (Optional)**
     *   **Description:** If included, develop logic to generate a basic PDF report summarizing inputs and key results.
     *   **PRD Ref:** Functional Requirements (4.1.6.4).
@@ -295,18 +296,18 @@ This document outlines the detailed development tasks required to create the PLA
 ## 8. Frontend Development: Configuration & Settings Section (PRD 4.1.7)
 
 *   **8.1. UI for PLAXIS Installation Path Configuration**
-    *   **Description:** Create an input field and a browse button for users to specify and validate the PLAXIS installation path. Store this configuration.
+    *   **Description:** `SettingsDialog` allows specifying PLAXIS executable path. `MainWindow` uses this path with fallbacks. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.7.1).
-    *   **Status:** Not Started. (Needs settings dialog/page)
+    *   **Status:** Implemented.
 *   **8.2. UI for Managing Default Parameter Settings (Optional)**
     *   **Description:** If included, implement UI to save current inputs as default for new projects.
     *   **PRD Ref:** Functional Requirements (4.1.7.2).
-    *   **Status:** Not Started.
+    *   **Status:** Deferred. (Placeholder in SettingsDialog comments)
 *   **8.3. UI for Units System Selection (If Applicable)**
-    *   **Description:** Create a dropdown or radio buttons for selecting the unit system, if supported.
+    *   **Description:** `SettingsDialog` includes a `QComboBox` for unit system selection (SI/Imperial placeholder). Setting is saved/loaded via `QSettings`. Backend `units.py` has conceptual link. Docstrings enhanced.
     *   **PRD Ref:** Functional Requirements (4.1.7.3).
-    *   **Status:** Not Started.
-    *   **Dependencies:** Backend unit system logic (2.4).
+    *   **Status:** Implemented.
+    *   **Dependencies:** Backend unit system logic (2.4) needs full integration if conversions are required.
 
 ## 9. Error Handling & Logging Implementation (PRD Section 8)
 
@@ -319,31 +320,31 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Logging (8.3).
     *   **Status:** Done.
 *   **9.3. Frontend: Implement User-Friendly Error Dialogs/Messages**
-    *   **Description:** Design and implement dialog boxes or message areas in the UI to display clear, constructive error messages to the user, based on information from the backend.
+    *   **Description:** Enhanced `MainWindow.on_run_analysis_clicked` to catch specific `PlaxisAutomationError` subtypes (e.g., `PlaxisConnectionError`, `PlaxisConfigurationError`, `PlaxisCalculationError`) and display more tailored `QMessageBox` dialogs to the user. Analysis execution moved to `AnalysisWorker` which emits error signals.
     *   **PRD Ref:** Error Handling (8.1).
-    *   **Status:** Partially done (basic `QMessageBox` used in `MainWindow`). **Needs more specific dialogs.**
+    *   **Status:** Implemented.
 *   **9.4. Frontend: Implement Input Validation Feedback**
-    *   **Description:** Provide immediate visual feedback in the UI for input validation errors (e.g., highlighting fields, tooltips with error details).
+    *   **Description:** Implemented live input validation (styling, tooltips, status signals) for `SpudcanGeometryWidget`, `LoadingConditionsWidget`, and `AnalysisControlWidget`. `MainWindow` updates "Run Analysis" button based on these. Validation for `SoilStratigraphyWidget` deferred due to complexity.
     *   **PRD Ref:** Error Handling (8.1.2).
-    *   **Status:** Not Started. (Connect `validation.py` to UI widgets)
+    *   **Status:** Partially Implemented.
 *   **9.5. Frontend: UI for Log Access (Optional)**
-    *   **Description:** If PRD 8.3.3.3 (easy log access) or 8.3.4 (UI log display) is implemented, create the necessary UI elements.
+    *   **Description:** Added "Open Log File Location" button to `MainWindow` to open the directory containing `plaxis_automation.log`.
     *   **PRD Ref:** Logging (8.3.3.3, 8.3.4).
-    *   **Status:** Not Started.
+    *   **Status:** Implemented.
 
 ## 10. Testing
 
 *   **10.1. Develop Backend Unit Tests**
-    *   **Description:** Write unit tests for core backend logic, utility functions, data model manipulation, and parameter validation.
+    *   **Description:** Added unit tests for `units.py` and enhanced tests for `project_io.py`. Pytest configured with `conftest.py` for path resolution. All backend unit tests passing.
     *   **PRD Ref:** Maintainability (5.4.4).
-    *   **Status:** Partially done (basic `if __name__ == '__main__'` tests in some modules). **Needs formal test framework (e.g., pytest) and comprehensive tests.**
+    *   **Status:** Enhanced.
 *   **10.2. Develop Backend Integration Tests for PLAXIS Interaction (Mocked/Real)**
-    *   **Description:** Write integration tests for the PLAXIS interaction layer. This may involve mocking PLAXIS calls or running tests against a real PLAXIS instance with simple, fast models. Test command generation and output parsing.
+    *   **Description:** Created initial integration tests for `PlaxisInteractor` using mocked PLAXIS API objects, covering connection, setup flow, CLI execution. All current integration tests passing.
     *   **PRD Ref:** Reliability (5.3.2, 5.3.3).
-    *   **Status:** Not Started.
+    *   **Status:** Partially Implemented.
 *   **10.3. Develop Frontend Unit Tests (If framework supports, e.g. for helper functions)**
     *   **Description:** Write unit tests for any complex frontend logic or utility functions that are not directly tied to UI rendering.
-    *   **Status:** Not Started.
+    *   **Status:** Deferred. (Requires further setup like pytest-qt and deeper investigation of testable non-UI frontend logic).
 *   **10.4. Perform Manual UI/UX Testing**
     *   **Description:** Systematically test all UI elements, user workflows, input validation, and adherence to UI/UX principles.
     *   **PRD Ref:** Usability (5.2), UI/UX Design Principles (6).
@@ -364,13 +365,13 @@ This document outlines the detailed development tasks required to create the PLA
     *   **PRD Ref:** Usability (5.2.2).
     *   **Status:** Not Started.
 *   **11.2. Document Backend Code (Docstrings, Comments)**
-    *   **Description:** Add comprehensive docstrings to Python modules, classes, and functions. Comment complex code sections.
+    *   **Description:** Reviewed and enhanced docstrings/comments for key backend modules: `plaxis_interactor.py`, `models.py`, `units.py`, `results_parser.py`.
     *   **PRD Ref:** Maintainability (5.4.2).
-    *   **Status:** Partially done (basic docstrings in created files). **Needs comprehensive review and additions.**
+    *   **Status:** Enhanced.
 *   **11.3. Document Frontend Code (Comments)**
-    *   **Description:** Comment complex UI logic or component interactions.
+    *   **Description:** Reviewed and enhanced docstrings/comments for key frontend modules: `main_window.py`, `spudcan_geometry_widget.py`, `loading_conditions_widget.py`, `analysis_control_widget.py`, `settings_dialog.py`, `mpl_widget.py`.
     *   **PRD Ref:** Maintainability (5.4.2).
-    *   **Status:** Partially done (basic docstrings/comments in created files). **Needs comprehensive review and additions.**
+    *   **Status:** Enhanced.
 *   **11.4. Create Developer Documentation (Optional but Recommended)**
     *   **Description:** Document the overall architecture, backend API (if applicable for frontend-backend communication), and build process for other developers.
     *   **PRD Ref:** Maintainability (5.4.2).
@@ -379,9 +380,9 @@ This document outlines the detailed development tasks required to create the PLA
 ## 12. Packaging & Distribution
 
 *   **12.1. Create Executable/Installer for Windows**
-    *   **Description:** Use PyInstaller (or equivalent) to package the Python application and all its dependencies into a standalone executable or installer for Windows.
+    *   **Description:** Refined `build.sh` with more complete PyInstaller commands and options (e.g., handling icon, paths, one-folder bundle). Actual packaging not run.
     *   **PRD Ref:** Packaging and Distribution (7.5.1), Compatibility (5.7.1).
-    *   **Status:** Placeholder script `build.sh` exists. **Actual packaging not done.**
+    *   **Status:** Enhanced (script prepared).
 *   **12.2. Test Packaged Application on Target OS**
     *   **Description:** Install and run the packaged application on a clean Windows environment to ensure it works correctly.
     *   **PRD Ref:** Reliability (5.3.1).
@@ -391,3 +392,7 @@ This document outlines the detailed development tasks required to create the PLA
     *   **Status:** Not Started.
 
 This detailed task list should provide a solid foundation for planning and executing the development of the PLAXIS 3D Spudcan Penetration Automation tool.
+
+[end of tasks.md]
+
+[end of tasks.md]

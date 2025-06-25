@@ -114,8 +114,9 @@ def test_parse_load_penetration_curve_step_by_step():
     mock_g_o._add_mock_rigid_body("Spudcan")
 
     curve = parse_load_penetration_curve(
-        mock_g_o,
-        spudcan_ref_object_name="Spudcan",
+        g_o=mock_g_o,
+        g_i=None, # Explicitly pass None for g_i as it's optional
+        spudcan_output_object_name="Spudcan", # Use new parameter name
         step_disp_component_result_type=mock_g_o.ResultTypes.RigidBody.Uy,
         step_load_component_result_type=mock_g_o.ResultTypes.RigidBody.Fz
     )
@@ -149,8 +150,9 @@ def test_parse_final_penetration_depth_object():
     mock_g_o.getresults = mock_getresults_final_pen
 
     depth = parse_final_penetration_depth(
-        mock_g_o,
-        spudcan_ref_object_name="Spudcan",
+        g_o=mock_g_o,
+        g_i=None, # Explicitly pass None for g_i
+        spudcan_output_object_name="Spudcan", # Use new parameter name
         disp_component_result_type=mock_g_o.ResultTypes.RigidBody.Uy
     )
     assert depth == pytest.approx(0.9)
