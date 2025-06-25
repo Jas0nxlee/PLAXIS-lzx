@@ -5,7 +5,7 @@ PRD Ref: Category 4 (Frontend Development: UI Shell & Framework) - Task 4.1
 
 import sys
 from PySide6.QtWidgets import QApplication
-from frontend.main_window import MainWindow # Relative import from sibling package
+from .frontend.main_window import MainWindow # Relative import from sibling package
 
 def main():
     """

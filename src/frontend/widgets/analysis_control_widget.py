@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Slot, Qt
 from typing import Optional, Any, Dict
 
-from backend.validation import validate_numerical_range, ValidationError
-from backend.models import AnalysisControlParameters
+from ...backend.validation import validate_numerical_range, ValidationError
+from ...backend.models import AnalysisControlParameters
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,14 @@ class AnalysisControlWidget(QWidget):
         """
         logger.debug(f"AnalysisControlWidget: Loading data - {ac_data}")
 
-        for child in self.findChildren((QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox)):
+        # Iterate over types one by one to avoid potential findChildren tuple issue
+        widgets_to_block = []
+        widgets_to_block.extend(self.findChildren(QSpinBox))
+        widgets_to_block.extend(self.findChildren(QDoubleSpinBox))
+        widgets_to_block.extend(self.findChildren(QComboBox))
+        widgets_to_block.extend(self.findChildren(QCheckBox))
+
+        for child in widgets_to_block:
             child.blockSignals(True)
 
         if ac_data:
@@ -272,7 +279,7 @@ class AnalysisControlWidget(QWidget):
             self.max_calc_steps_spinbox.setValue(1000)
             self.min_iterations_spinbox.setValue(10)
 
-        for child in self.findChildren((QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox)):
+        for child in widgets_to_block: # Use the same list to unblock
             child.blockSignals(False)
 
         self._validate_all_inputs() # Validate after loading all data
