@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Slot, Qt
 from typing import Optional, Any, Dict
 
-from backend.validation import validate_numerical_range, ValidationError
-from backend.models import LoadingConditions
+from ...backend.validation import validate_numerical_range, ValidationError
+from ...backend.models import LoadingConditions
 
 logger = logging.getLogger(__name__)
 

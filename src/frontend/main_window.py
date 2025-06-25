@@ -22,12 +22,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QIcon, QFont, QDesktopServices
 from PySide6.QtCore import Qt, QSize, Slot, QUrl, QObject, Signal, QRunnable, QThreadPool, QThread
 
-from backend.models import (
+from ..backend.models import (
     ProjectSettings, SpudcanGeometry, SoilLayer, MaterialProperties,
     LoadingConditions, AnalysisControlParameters, AnalysisResults
 )
-from backend.project_io import save_project, load_project
-from backend.logger_config import LOG_FILENAME
+from ..backend.project_io import save_project, load_project
+from ..backend.logger_config import LOG_FILENAME
 
 from .widgets.spudcan_geometry_widget import SpudcanGeometryWidget
 from .widgets.soil_stratigraphy_widget import SoilStratigraphyWidget
@@ -36,9 +36,9 @@ from .widgets.analysis_control_widget import AnalysisControlWidget
 from .widgets.mpl_widget import MplWidget
 from .qt_logging_handler import QtLoggingHandler
 from .settings_dialog import SettingsDialog
-from backend.plaxis_interactor.interactor import PlaxisInteractor
-from backend.plaxis_interactor import geometry_builder, soil_builder, calculation_builder, results_parser
-from backend.exceptions import (
+from ..backend.plaxis_interactor.interactor import PlaxisInteractor
+from ..backend.plaxis_interactor import geometry_builder, soil_builder, calculation_builder, results_parser
+from ..backend.exceptions import (
     PlaxisAutomationError, PlaxisConnectionError, PlaxisConfigurationError,
     PlaxisCalculationError, PlaxisOutputError, PlaxisCliError, ProjectValidationError
 )
@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
         self.qt_log_handler = QtLoggingHandler() # No parent needed if signal name is explicit
         log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
         self.qt_log_handler.setFormatter(log_formatter)
-        self.qt_log_handler.message_logged.connect(self._append_log_message) # Use explicit signal name
+        self.qt_log_handler.connect(self._append_log_message) # Use the provided connect method
         logging.getLogger().addHandler(self.qt_log_handler)
         self.qt_log_handler.setLevel(logging.INFO)
 

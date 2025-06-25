@@ -136,6 +136,8 @@ class ProjectSettings:
     # plaxis_api_output_port: Optional[int] = None
     # plaxis_api_password: Optional[str] = None
 
+    analysis_results: Optional['AnalysisResults'] = None # To store results associated with these settings
+
 
 @dataclass
 class AnalysisResults:
