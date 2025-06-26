@@ -48,7 +48,7 @@ graph TD
     B -->|Commands, Control, Data| C(PLAXIS Interactor Python<br>src backend plaxis_interactor interactor.py)
     C -->|Python Scripting API / CLI| D(PLAXIS 3D Software)
 
-    subgraph A [User Interface (Frontend)]
+    subgraph sgA ["User Interface (Frontend)"]
         direction TB
         A1[Project Management (New, Save, Load)]
         A2[Input Widgets (Spudcan Geometry, Soil, Loading, Analysis Ctrl)]
@@ -57,7 +57,7 @@ graph TD
         A5[Configuration Dialog]
     end
 
-    subgraph B [Backend Logic (Python)]
+    subgraph sgB ["Backend Logic (Python)"]
         direction TB
         B1[Data Models (ProjectSettings, SpudcanGeometry, SoilLayer, etc.)]
         B2[Project I/O (Save/Load JSON - project_io.py)]
@@ -65,7 +65,7 @@ graph TD
         B4[Analysis Worker (QThread in main_window.py to manage interactor)]
     end
 
-    subgraph C [PLAXIS Interactor (Python)]
+    subgraph sgC ["PLAXIS Interactor (Python)"]
         direction TB
         C1[Manages connection to PLAXIS (Input/Output servers via plxscripting)]
         C2[Translates UI data into PLAXIS API commands (using builder modules)<br>- Geometry Builder<br>- Soil Builder<br>- Calculation Builder]
