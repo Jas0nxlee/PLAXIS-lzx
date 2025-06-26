@@ -1,5 +1,7 @@
 # PLAXIS 3D Spudcan Penetration Automation Tool
 
+[查看中文版 (View Chinese Version)](readme_zh.md)
+
 The PLAXIS 3D Spudcan Penetration Automation Tool is a desktop application designed to streamline and automate the process of spudcan penetration analysis using PLAXIS 3D. It provides a user-friendly graphical interface for inputting parameters, controlling the analysis, and viewing results, all based on the workflow detailed in "基于PLAXIS3D的海洋桩靴入泥深度设计流程.pdf".
 
 ## Features
@@ -40,48 +42,37 @@ The PLAXIS 3D Spudcan Penetration Automation Tool is a desktop application desig
 
 The application is structured into a frontend (GUI) and a backend (logic and PLAXIS interaction).
 
-```
-+---------------------------------------------------------------------------------+
-|                            User Interface (Frontend)                            |
-|                        (PySide6 - src/frontend/)                                |
-|---------------------------------------------------------------------------------|
-| - Project Management (New, Save, Load)                                          |
-| - Input Widgets (Spudcan Geometry, Soil, Loading, Analysis Ctrl)                |
-| - Execution Controls (Run, Stop) & Progress Display                           |
-| - Results Display (Plots, Tables, Summary)                                      |
-| - Configuration Dialog                                                          |
-+---------------------------------/|\--------------------------------------------+
-                                  | (User Actions, Data Models)
-                                 \|/
-+---------------------------------------------------------------------------------+
-|                              Backend Logic (Python)                             |
-|                               (src/backend/)                                    |
-|---------------------------------------------------------------------------------|
-| - Data Models (ProjectSettings, SpudcanGeometry, SoilLayer, etc.)               |
-| - Project I/O (Save/Load JSON - project_io.py)                                  |
-| - Input Validation (validation.py)                                              |
-| - Analysis Worker (QThread in main_window.py to manage interactor)              |
-|---------------------------------/|\--------------------------------------------+
-                                  | (Commands, Control, Data)
-                                 \|/
-+---------------------------------------------------------------------------------+
-|                        PLAXIS Interactor (Python)                               |
-|                  (src/backend/plaxis_interactor/interactor.py)                  |
-|---------------------------------------------------------------------------------|
-| - Manages connection to PLAXIS (Input/Output servers via plxscripting)          |
-| - Translates UI data into PLAXIS API commands (using builder modules)           |
-|   - Geometry Builder                                                            |
-|   - Soil Builder                                                                |
-|   - Calculation Builder                                                         |
-| - Executes PLAXIS operations (setup, meshing, calculation)                      |
-| - Extracts results using PLAXIS API (via results_parser module)                 |
-| - Handles PLAXIS specific errors and logging                                    |
-+---------------------------------/|\--------------------------------------------+
-                                  | (Python Scripting API / CLI)
-                                 \|/
-+---------------------------------------------------------------------------------+
-|                                PLAXIS 3D Software                               |
-+---------------------------------------------------------------------------------+
+```mermaid
+graph TD
+    A[User Interface (Frontend)<br>(PySide6 - src/frontend/)] -->|User Actions, Data Models| B(Backend Logic (Python)<br>(src/backend/))
+    B -->|Commands, Control, Data| C(PLAXIS Interactor (Python)<br>(src/backend/plaxis_interactor/interactor.py))
+    C -->|Python Scripting API / CLI| D(PLAXIS 3D Software)
+
+    subgraph A [User Interface (Frontend)]
+        direction TB
+        A1[Project Management (New, Save, Load)]
+        A2[Input Widgets (Spudcan Geometry, Soil, Loading, Analysis Ctrl)]
+        A3[Execution Controls (Run, Stop) & Progress Display]
+        A4[Results Display (Plots, Tables, Summary)]
+        A5[Configuration Dialog]
+    end
+
+    subgraph B [Backend Logic (Python)]
+        direction TB
+        B1[Data Models (ProjectSettings, SpudcanGeometry, SoilLayer, etc.)]
+        B2[Project I/O (Save/Load JSON - project_io.py)]
+        B3[Input Validation (validation.py)]
+        B4[Analysis Worker (QThread in main_window.py to manage interactor)]
+    end
+
+    subgraph C [PLAXIS Interactor (Python)]
+        direction TB
+        C1[Manages connection to PLAXIS (Input/Output servers via plxscripting)]
+        C2[Translates UI data into PLAXIS API commands (using builder modules)<br>- Geometry Builder<br>- Soil Builder<br>- Calculation Builder]
+        C3[Executes PLAXIS operations (setup, meshing, calculation)]
+        C4[Extracts results using PLAXIS API (via results_parser module)]
+        C5[Handles PLAXIS specific errors and logging]
+    end
 ```
 
 ## User Interaction Workflow
@@ -116,27 +107,31 @@ The application is structured into a frontend (GUI) and a backend (logic and PLA
 8.  **Save Project:** User saves the current project settings (and results if available) to a `.plaxauto` file.
 9.  **Exit:** User closes the application.
 
-```
-+----------+     +----------------------+     +-----------------+     +----------------------+     +-----------+
-|   User   | --> | PlaxisSpudcanAutomator | --> | PlaxisInteractor| --> |   PLAXIS 3D API      | --> |  PLAXIS   |
-|          |     | (Frontend - PySide6) |     | (Backend Logic) |     | (plxscripting lib)   |     |  Engine   |
-+----------+     +----------------------+     +-----------------+     +----------------------+     +-----------+
-     | Input Parameters                      | Build Commands          | Execute Commands       |      |
-     | (Spudcan, Soil, Load)                 | (geom, soil, calc)      | (new, set, mesh, calc) |      |
-     |-------------------------------------> | ----------------------> | -------------------- > | ---- | Calculate
-     | Click "Run Analysis"                  |                         |                        |      |
-     |-------------------------------------> | Start Analysis Thread   |                        |      |
-     |                                       |                         |                        | <--- | Results Data
-     | <-------------------------------------| <-----------------------| <--------------------- |      |
-     | View Progress & Logs                  | Update UI Progress      | Send Progress/Status   |
-     |                                       |                         |                        |
-     | <-------------------------------------|                         |                        |
-     | View Results (Plots, Tables)          | Update UI with Results  | Parse Raw Results      |
-     |                                       |                         | (from g_o)             |
-     | Save/Load Project (.plaxauto)         | Handle Project I/O      |                        |
-     |<-------------------------------------> |                         |                        |
-     | Configure PLAXIS Path                 | Store/Retrieve Path     |                        |
-     |<-------------------------------------> |                         |                        |
+```mermaid
+sequenceDiagram
+    participant User
+    participant Automator as PlaxisSpudcanAutomator<br>(Frontend - PySide6)
+    participant Interactor as PlaxisInteractor<br>(Backend Logic)
+    participant API as PLAXIS 3D API<br>(plxscripting lib)
+    participant PLAXIS as PLAXIS Engine
+
+    User->>Automator: Input Parameters (Spudcan, Soil, Load)
+    User->>Automator: Click "Run Analysis"
+    Automator->>Interactor: Start Analysis Thread
+    Interactor->>API: Build Commands (geom, soil, calc)
+    API->>PLAXIS: Execute Commands (new, set, mesh, calc)
+    PLAXIS-->>API: Results Data
+    API-->>Interactor: Send Progress/Status
+    API-->>Interactor: Parse Raw Results (from g_o)
+    Interactor-->>Automator: Update UI Progress
+    Interactor-->>Automator: Update UI with Results
+    Automator-->>User: View Progress & Logs
+    Automator-->>User: View Results (Plots, Tables)
+
+    User->>Automator: Save/Load Project (.plaxauto)
+    Automator->>Interactor: Handle Project I/O
+    User->>Automator: Configure PLAXIS Path
+    Automator->>Interactor: Store/Retrieve Path
 ```
 
 ## Installation
@@ -240,5 +235,3 @@ The project uses `pytest` for testing.
     *   And `xvfb` itself for running in headless environments.
     If you encounter similar Qt platform issues, ensure these (or their equivalents for your distribution) are installed.
 *   **PLAXIS Software Dependency:** Full functionality of this tool (i.e., running actual analyses) is dependent on a licensed and working installation of PLAXIS 3D with its Python scripting API enabled and accessible.
-
-```
