@@ -44,8 +44,8 @@ The application is structured into a frontend (GUI) and a backend (logic and PLA
 
 ```mermaid
 graph TD
-    A["User Interface (Frontend)<br>(PySide6 - src/frontend/)"] -->|User Actions, Data Models| B["Backend Logic (Python)<br>(src/backend/)"]
-    B -->|Commands, Control, Data| C["PLAXIS Interactor (Python)<br>(src/backend/plaxis_interactor/interactor.py)"]
+    A[User Interface Frontend<br>PySide6 - src frontend] -->|User Actions, Data Models| B(Backend Logic Python<br>src backend)
+    B -->|Commands, Control, Data| C(PLAXIS Interactor Python<br>src backend plaxis_interactor interactor.py)
     C -->|Python Scripting API / CLI| D(PLAXIS 3D Software)
 
     subgraph A [User Interface (Frontend)]
