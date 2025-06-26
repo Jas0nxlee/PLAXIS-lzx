@@ -44,34 +44,34 @@ PLAXIS 3D 桩靴贯入自动化工具是一款桌面应用程序，旨在简化�
 
 ```mermaid
 graph TD
-    A[用户界面 (前端)<br>(PySide6 - src/frontend/)] -->|用户操作, 数据模型| B(后端逻辑 (Python)<br>(src/backend/))
-    B -->|命令, 控制, 数据| C(PLAXIS 交互器 (Python)<br>(src/backend/plaxis_interactor/interactor.py))
+    A[用户界面 前端<br>PySide6 - src frontend] -->|用户操作, 数据模型| B(后端逻辑 Python<br>src backend)
+    B -->|命令, 控制, 数据| C(PLAXIS 交互器 Python<br>src backend plaxis_interactor interactor.py)
     C -->|Python 脚本 API / CLI| D(PLAXIS 3D 软件)
 
-    subgraph A [用户界面 (前端)]
+    subgraph sgA ["用户界面 (前端)"]
         direction TB
-        A1[项目管理 (新建, 保存, 加载)]
-        A2[输入组件 (桩靴几何, 土壤, 加载, 分析控制)]
-        A3[执行控制 (运行, 停止) & 进度显示]
-        A4[结果显示 (图表, 表格, 摘要)]
-        A5[配置对话框]
+        A1["项目管理 (新建, 保存, 加载)"]
+        A2["输入组件 (桩靴几何, 土壤, 加载, 分析控制)"]
+        A3["执行控制 (运行, 停止) & 进度显示"]
+        A4["结果显示 (图表, 表格, 摘要)"]
+        A5["配置对话框"]
     end
 
-    subgraph B [后端逻辑 (Python)]
+    subgraph sgB ["后端逻辑 (Python)"]
         direction TB
-        B1[数据模型 (ProjectSettings, SpudcanGeometry, SoilLayer, 等.)]
-        B2[项目 I/O (保存/加载 JSON - project_io.py)]
-        B3[输入验证 (validation.py)]
-        B4[分析工作器 (main_window.py 中的 QThread 管理交互器)]
+        B1["数据模型 (ProjectSettings, SpudcanGeometry, SoilLayer, 等.)"]
+        B2["项目 I/O (保存/加载 JSON - project_io.py)"]
+        B3["输入验证 (validation.py)"]
+        B4["分析工作器 (main_window.py 中的 QThread 管理交互器)"]
     end
 
-    subgraph C [PLAXIS 交互器 (Python)]
+    subgraph sgC ["PLAXIS 交互器 (Python)"]
         direction TB
-        C1[管理与 PLAXIS 的连接 (通过 plxscripting 连接输入/输出服务器)]
-        C2[将 UI 数据转换为 PLAXIS API 命令 (使用 builder 模块)<br>- 几何构建器<br>- 土壤构建器<br>- 计算构建器]
-        C3[执行 PLAXIS 操作 (设置, 网格划分, 计算)]
-        C4[使用 PLAXIS API 提取结果 (通过 results_parser 模块)]
-        C5[处理 PLAXIS 特定错误和日志记录]
+        C1["管理与 PLAXIS 的连接 (通过 plxscripting 连接输入/输出服务器)"]
+        C2["将 UI 数据转换为 PLAXIS API 命令 (使用 builder 模块)<br>- 几何构建器<br>- 土壤构建器<br>- 计算构建器"]
+        C3["执行 PLAXIS 操作 (设置, 网格划分, 计算)"]
+        C4["使用 PLAXIS API 提取结果 (通过 results_parser 模块)"]
+        C5["处理 PLAXIS 特定错误和日志记录"]
     end
 ```
 
@@ -110,9 +110,9 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant User as 用户
-    participant Automator as PlaxisSpudcanAutomator<br>(前端 - PySide6)
-    participant Interactor as PlaxisInteractor<br>(后端逻辑)
-    participant API as PLAXIS 3D API<br>(plxscripting 库)
+    participant Automator as "PlaxisSpudcanAutomator<br>(前端 - PySide6)"
+    participant Interactor as "PlaxisInteractor<br>(后端逻辑)"
+    participant API as "PLAXIS 3D API<br>(plxscripting 库)"
     participant PLAXIS as PLAXIS 引擎
 
     User->>Automator: 输入参数 (桩靴, 土壤, 荷载)
