@@ -50,28 +50,28 @@ graph TD
 
     subgraph sgA ["User Interface (Frontend)"]
         direction TB
-        A1[Project Management (New, Save, Load)]
-        A2[Input Widgets (Spudcan Geometry, Soil, Loading, Analysis Ctrl)]
-        A3[Execution Controls (Run, Stop) & Progress Display]
-        A4[Results Display (Plots, Tables, Summary)]
-        A5[Configuration Dialog]
+        A1["Project Management (New, Save, Load)"]
+        A2["Input Widgets (Spudcan Geometry, Soil, Loading, Analysis Ctrl)"]
+        A3["Execution Controls (Run, Stop) & Progress Display"]
+        A4["Results Display (Plots, Tables, Summary)"]
+        A5["Configuration Dialog"]
     end
 
     subgraph sgB ["Backend Logic (Python)"]
         direction TB
-        B1[Data Models (ProjectSettings, SpudcanGeometry, SoilLayer, etc.)]
-        B2[Project I/O (Save/Load JSON - project_io.py)]
-        B3[Input Validation (validation.py)]
-        B4[Analysis Worker (QThread in main_window.py to manage interactor)]
+        B1["Data Models (ProjectSettings, SpudcanGeometry, SoilLayer, etc.)"]
+        B2["Project I/O (Save/Load JSON - project_io.py)"]
+        B3["Input Validation (validation.py)"]
+        B4["Analysis Worker (QThread in main_window.py to manage interactor)"]
     end
 
     subgraph sgC ["PLAXIS Interactor (Python)"]
         direction TB
-        C1[Manages connection to PLAXIS (Input/Output servers via plxscripting)]
-        C2[Translates UI data into PLAXIS API commands (using builder modules)<br>- Geometry Builder<br>- Soil Builder<br>- Calculation Builder]
-        C3[Executes PLAXIS operations (setup, meshing, calculation)]
-        C4[Extracts results using PLAXIS API (via results_parser module)]
-        C5[Handles PLAXIS specific errors and logging]
+        C1["Manages connection to PLAXIS (Input/Output servers via plxscripting)"]
+        C2["Translates UI data into PLAXIS API commands (using builder modules)<br>- Geometry Builder<br>- Soil Builder<br>- Calculation Builder"]
+        C3["Executes PLAXIS operations (setup, meshing, calculation)"]
+        C4["Extracts results using PLAXIS API (via results_parser module)"]
+        C5["Handles PLAXIS specific errors and logging"]
     end
 ```
 
@@ -110,9 +110,9 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant User
-    participant Automator as PlaxisSpudcanAutomator<br>(Frontend - PySide6)
-    participant Interactor as PlaxisInteractor<br>(Backend Logic)
-    participant API as PLAXIS 3D API<br>(plxscripting lib)
+    participant Automator as "PlaxisSpudcanAutomator<br>(Frontend - PySide6)"
+    participant Interactor as "PlaxisInteractor<br>(Backend Logic)"
+    participant API as "PLAXIS 3D API<br>(plxscripting lib)"
     participant PLAXIS as PLAXIS Engine
 
     User->>Automator: Input Parameters (Spudcan, Soil, Load)
